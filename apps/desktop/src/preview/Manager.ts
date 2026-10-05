@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  isPinnedAppTabId,
 } from "@t3tools/contracts";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -2088,6 +2089,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.setWindowOpenHandler((details) => {
           if (previewWindowOpenAction(details) === "popup") {
             return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+          }
+          if (isPinnedAppTabId(tabId) && isPopupUrl(details.url)) {
+            runFork(
+              attemptPromise({ operation: "openPinnedAppLink", tabId, webContentsId: wc.id }, () =>
+                shell.openExternal(details.url),
+              ).pipe(Effect.ignore),
+            );
+            return { action: "deny" };
           }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>

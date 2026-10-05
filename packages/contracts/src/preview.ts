@@ -25,6 +25,15 @@ const Title = Schema.String.check(Schema.isMaxLength(512));
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewTabId = typeof PreviewTabId.Type;
 
+/**
+ * Desktop-only tabs behind the sidebar's pinned apps. They have no thread or
+ * server session, and new-tab links inside them open in the system browser so
+ * the app itself stays put.
+ */
+export const PINNED_APP_TAB_ID_PREFIX = "pinned-app:";
+export const isPinnedAppTabId = (tabId: string): boolean =>
+  tabId.startsWith(PINNED_APP_TAB_ID_PREFIX);
+
 export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
 export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840;
 export const PREVIEW_VIEWPORT_MAX_AREA = 3840 * 2160;
