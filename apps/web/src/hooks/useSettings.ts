@@ -366,18 +366,13 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 }
 
 /**
- * Whether the legacy sidebar (Settings → General → Legacy features) replaces
- * the default one.
+ * Whether the per-project thread tree replaces the flat sidebar.
  *
- * Held at the default sidebar until client settings hydrate: the pre-hydration
- * snapshot is just the schema defaults, so resolving against it could mount one
- * sidebar and then swap it out once persisted settings land — remounting the
- * whole tree for everyone instead of only for legacy opt-ins.
+ * Always true in this build: the tree is the sidebar, and the flat one has no
+ * setting. The hook stays so its callers keep asking one question.
  */
 export function useLegacySidebarEnabled(): boolean {
-  const settingsHydrated = useClientSettingsHydrated();
-  const legacySidebarEnabled = useClientSettingsValue().legacySidebarEnabled;
-  return settingsHydrated && legacySidebarEnabled;
+  return true;
 }
 
 /** Read current settings for one environment, merged with client-local preferences. */

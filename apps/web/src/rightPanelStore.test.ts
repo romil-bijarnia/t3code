@@ -445,14 +445,15 @@ describe("rightPanelStore", () => {
     const store = useRightPanelStore.getState();
 
     expect(selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "inline")).toBe(
-      true,
+      false,
     );
     expect(selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "popover")).toBe(
       false,
     );
 
-    store.setThreadPanelOpen(refA, "inline", false);
+    store.setThreadPanelOpen(refA, "inline", true);
     store.toggleThreadPanel(refA, "popover");
+    store.setThreadPanelOpen(refA, "inline", false);
 
     expect(
       selectThreadPanelVisibility(
@@ -465,7 +466,7 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refB,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
   });
 
   it("closes the popover atomically when the real right panel opens", () => {
@@ -477,7 +478,7 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
   });
 
   it("keeps an open popover visible by promoting it to inline when the real panel closes", () => {
