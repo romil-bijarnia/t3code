@@ -168,7 +168,6 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -1225,7 +1224,7 @@ export function AppearanceSettingsPanel() {
           control={
             <div className="flex w-full items-center gap-3 sm:w-52">
               <output
-                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                className="min-w-12 text-right text-sm tabular-nums text-muted-foreground"
                 htmlFor="appearance-contrast"
               >
                 {settings.appearanceContrast}%
@@ -1271,7 +1270,7 @@ export function AppearanceSettingsPanel() {
           control={
             <div className="flex w-full items-center gap-3 sm:w-52">
               <output
-                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                className="min-w-12 text-right text-sm tabular-nums text-muted-foreground"
                 htmlFor="glass-opacity"
               >
                 {settings.glassOpacity}%
@@ -1461,37 +1460,34 @@ export function AppearanceSettingsPanel() {
           {...searchableSetting("panel-animations")}
           description="Set how fast panels open and close."
           control={
-            <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
-              <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
-              <div className="flex w-full items-center gap-3">
-                <output
-                  className="min-w-16 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                  htmlFor="panel-animation-duration"
-                >
-                  {settings.panelAnimationDurationMs} ms
-                </output>
-                <input
-                  aria-label="Panel animation duration"
-                  className="settings-slider min-w-0 flex-1"
-                  id="panel-animation-duration"
-                  max={MAX_PANEL_ANIMATION_DURATION_MS}
-                  min={MIN_PANEL_ANIMATION_DURATION_MS}
-                  onChange={(event) => {
-                    const panelAnimationDurationMs = Number(event.currentTarget.value);
-                    if (
-                      Number.isInteger(panelAnimationDurationMs) &&
-                      panelAnimationDurationMs >= MIN_PANEL_ANIMATION_DURATION_MS &&
-                      panelAnimationDurationMs <= MAX_PANEL_ANIMATION_DURATION_MS
-                    ) {
-                      updateSettings({ panelAnimationDurationMs });
-                    }
-                  }}
-                  step={25}
-                  style={panelAnimationDurationSliderStyle}
-                  type="range"
-                  value={settings.panelAnimationDurationMs}
-                />
-              </div>
+            <div className="flex w-full items-center gap-3 sm:w-52">
+              <output
+                className="min-w-16 text-right text-sm tabular-nums text-muted-foreground"
+                htmlFor="panel-animation-duration"
+              >
+                {settings.panelAnimationDurationMs} ms
+              </output>
+              <input
+                aria-label="Panel animation duration"
+                className="settings-slider min-w-0 flex-1"
+                id="panel-animation-duration"
+                max={MAX_PANEL_ANIMATION_DURATION_MS}
+                min={MIN_PANEL_ANIMATION_DURATION_MS}
+                onChange={(event) => {
+                  const panelAnimationDurationMs = Number(event.currentTarget.value);
+                  if (
+                    Number.isInteger(panelAnimationDurationMs) &&
+                    panelAnimationDurationMs >= MIN_PANEL_ANIMATION_DURATION_MS &&
+                    panelAnimationDurationMs <= MAX_PANEL_ANIMATION_DURATION_MS
+                  ) {
+                    updateSettings({ panelAnimationDurationMs });
+                  }
+                }}
+                step={25}
+                style={panelAnimationDurationSliderStyle}
+                type="range"
+                value={settings.panelAnimationDurationMs}
+              />
             </div>
           }
           resetAction={
