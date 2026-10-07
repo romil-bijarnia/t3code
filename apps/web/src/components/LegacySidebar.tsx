@@ -206,6 +206,8 @@ import {
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarPinnedThreads } from "./sidebar/SidebarPinnedThreads";
+import { SidebarSpaces } from "./sidebar/SidebarSpaces";
+import { isSpaceWorkspaceRoot } from "../spaces/spaces";
 import { SidebarPrimaryNav } from "./sidebar/SidebarPrimaryNav";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
@@ -3101,6 +3103,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ) : null}
       <LocalSecondaryStatus />
       <SidebarPinnedThreads activeThreadKey={routeThreadKey} />
+      <SidebarSpaces />
       <SidebarGroup>
         <div className="group/projects-heading flex h-8 items-center justify-between pr-1.5 pl-(--sidebar-row-content-inset)">
           <span className="text-base text-sidebar-muted-foreground">Projects</span>
@@ -3218,7 +3221,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function LegacySidebar() {
-  const projects = useProjects();
+  const allProjects = useProjects();
+  // Spaces have their own section; the project tree only lists real projects.
+  const projects = useMemo(
+    () => allProjects.filter((project) => !isSpaceWorkspaceRoot(project.workspaceRoot)),
+    [allProjects],
+  );
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);

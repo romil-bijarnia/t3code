@@ -66,6 +66,15 @@ function getProjectEntriesQueryAtom(
   });
 }
 
+/** Re-lists one directory everywhere it is shown, after a write or move changed it. */
+export function refreshProjectEntriesQuery(
+  environmentId: EnvironmentId,
+  cwd: string,
+  directoryPath?: string,
+): void {
+  appAtomRegistry.refresh(getProjectEntriesQueryAtom(environmentId, cwd, directoryPath));
+}
+
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,
