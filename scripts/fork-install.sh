@@ -81,7 +81,9 @@ installed_version() {
 
 base_version="$(node -p "require('$REPO/apps/desktop/package.json').version.split('-')[0]")"
 next_version="$(node -p "const [a, b, c] = '$base_version'.split('.').map(Number); [a, b, c + 1].join('.')")"
-version="$next_version-preview.$(date +%Y%m%d).$(date +%H%M)"
+# Semver drops leading zeros from numeric parts (0118 becomes 118), so do the
+# same here or the artifact name will not match before 10 am.
+version="$next_version-preview.$(date +%Y%m%d).$((10#$(date +%H%M)))"
 
 ensure_identity
 ensure_resource_monitor
