@@ -467,6 +467,7 @@ export const ProjectFileOperation = Schema.Literals([
   "close",
   "make-directory",
   "write-file",
+  "rename",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
@@ -510,8 +511,20 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  /** "base64" writes the decoded bytes, for files that are not text. */
+  encoding: Schema.optional(Schema.Literals(["utf8", "base64"])),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
+
+/** Moves or renames one entry inside the workspace. Never overwrites. */
+export const ProjectMoveEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  toRelativePath: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
+  ),
+});
+export type ProjectMoveEntryInput = typeof ProjectMoveEntryInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,

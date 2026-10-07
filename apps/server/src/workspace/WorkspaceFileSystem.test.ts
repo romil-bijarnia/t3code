@@ -337,5 +337,85 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(escapedStat).toBeNull();
       }),
     );
+
+    it.effect("writes decoded bytes for base64 contents", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff]);
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "files/scan.pdf",
+          contents: Buffer.from(bytes).toString("base64"),
+          encoding: "base64",
+        });
+        const saved = yield* fileSystem
+          .readFile(path.join(cwd, "files/scan.pdf"))
+          .pipe(Effect.orDie);
+
+        expect(Array.from(saved)).toEqual(Array.from(bytes));
+      }),
+    );
+  });
+
+  describe("moveEntry", () => {
+    it.effect("moves a file into a new folder", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "pages/Notes.md", "# Notes\n");
+
+        const result = yield* workspaceFileSystem.moveEntry({
+          cwd,
+          relativePath: "pages/Notes.md",
+          toRelativePath: ".trash/1/Notes.md",
+        });
+
+        expect(result).toEqual({ relativePath: ".trash/1/Notes.md" });
+        expect(yield* fileSystem.exists(path.join(cwd, "pages/Notes.md"))).toBe(false);
+        expect(
+          yield* fileSystem.readFileString(path.join(cwd, ".trash/1/Notes.md")).pipe(Effect.orDie),
+        ).toBe("# Notes\n");
+      }),
+    );
+
+    it.effect("refuses to replace an existing entry", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "pages/A.md", "a");
+        yield* writeTextFile(cwd, "pages/B.md", "b");
+
+        const error = yield* workspaceFileSystem
+          .moveEntry({ cwd, relativePath: "pages/A.md", toRelativePath: "pages/B.md" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(
+          yield* fileSystem.readFileString(path.join(cwd, "pages/B.md")).pipe(Effect.orDie),
+        ).toBe("b");
+      }),
+    );
+
+    it.effect("rejects moves that leave the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "pages/A.md", "a");
+
+        const error = yield* workspaceFileSystem
+          .moveEntry({ cwd, relativePath: "pages/A.md", toRelativePath: "../A.md" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+      }),
+    );
   });
 });

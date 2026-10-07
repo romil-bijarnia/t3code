@@ -164,5 +164,15 @@ export function createProjectEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
     }),
+    moveEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:move-entry",
+      tag: WS_METHODS.projectsMoveEntry,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
   };
 }
