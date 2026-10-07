@@ -2315,3 +2315,182 @@ code {
     }
   }
 }
+
+/* Space pages: a Markdown block editor laid out like ChatGPT's page editor.
+   Sizes are ratios of the interface size so the page follows the user's
+   font setting; headings 1.5/1.25/1.125, 24px between blocks. */
+.space-page-editor {
+  outline: none;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.space-page-editor > * + * {
+  margin-top: 1em;
+}
+
+.space-page-editor > * + h1,
+.space-page-editor > * + h2,
+.space-page-editor > * + h3 {
+  margin-top: 2em;
+}
+
+.space-page-editor h1 + *,
+.space-page-editor h2 + *,
+.space-page-editor h3 + * {
+  margin-top: 0.5em;
+}
+
+.space-page-editor h1,
+.space-page-editor h2,
+.space-page-editor h3,
+.space-page-editor h4,
+.space-page-editor h5,
+.space-page-editor h6 {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.space-page-editor h1 {
+  font-size: 1.5em;
+}
+
+.space-page-editor h2 {
+  font-size: 1.25em;
+}
+
+.space-page-editor h3 {
+  font-size: 1.125em;
+}
+
+.space-page-editor p {
+  margin: 0;
+}
+
+.space-page-editor strong {
+  font-weight: 600;
+}
+
+.space-page-editor a {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--muted-foreground);
+  text-underline-offset: 0.15em;
+}
+
+.space-page-editor a:hover {
+  color: var(--primary);
+}
+
+.space-page-editor code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: color-mix(in oklab, var(--muted-foreground) 14%, transparent);
+  border-radius: 0.3em;
+  padding: 0.1em 0.3em;
+}
+
+.space-page-editor pre {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  line-height: 1.5;
+  background: color-mix(in oklab, var(--muted-foreground) 10%, transparent);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+.space-page-editor pre code {
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  font-size: 1em;
+}
+
+.space-page-editor pre[data-raw-markdown] {
+  border: 1px dashed var(--border);
+  white-space: pre-wrap;
+}
+
+.space-page-editor blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+}
+
+.space-page-editor hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+
+.space-page-editor ul,
+.space-page-editor ol {
+  padding-left: 1.3125rem;
+}
+
+.space-page-editor ul {
+  list-style: disc;
+}
+
+.space-page-editor ol {
+  list-style: decimal;
+}
+
+.space-page-editor li + li {
+  margin-top: 0.25em;
+}
+
+.space-page-editor li > ul,
+.space-page-editor li > ol {
+  margin-top: 0.25em;
+}
+
+.space-page-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.space-page-editor ul[data-type="taskList"] ul[data-type="taskList"] {
+  padding-left: 1.375rem;
+}
+
+.space-page-editor li[data-checked] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.space-page-editor li[data-checked] > label {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 1lh;
+  cursor: pointer;
+}
+
+.space-page-editor li[data-checked] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.space-page-editor li[data-checked="true"] > div {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+.space-page-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.space-page-editor .ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}

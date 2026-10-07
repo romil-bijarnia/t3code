@@ -697,6 +697,9 @@ importers:
       '@tiptap/extension-task-list':
         specifier: ^3.31.3
         version: 3.31.3(@tiptap/extension-list@3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3))
+      '@tiptap/extensions':
+        specifier: 3.31.3
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
       '@tiptap/pm':
         specifier: ^3.31.3
         version: 3.31.3
@@ -769,6 +772,12 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      remark-parse:
+        specifier: 11.0.0
+        version: 11.0.0
+      remark-stringify:
+        specifier: 11.0.0
+        version: 11.0.0
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.6.0

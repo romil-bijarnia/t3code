@@ -207,7 +207,7 @@ import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarPinnedThreads } from "./sidebar/SidebarPinnedThreads";
 import { SidebarSpaces } from "./sidebar/SidebarSpaces";
-import { isSpaceWorkspaceRoot } from "../spaces/spaces";
+import { isInsideSpacesFolder } from "../spaces/spaces";
 import { SidebarPrimaryNav } from "./sidebar/SidebarPrimaryNav";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
@@ -3224,7 +3224,7 @@ export default function LegacySidebar() {
   const allProjects = useProjects();
   // Spaces have their own section; the project tree only lists real projects.
   const projects = useMemo(
-    () => allProjects.filter((project) => !isSpaceWorkspaceRoot(project.workspaceRoot)),
+    () => allProjects.filter((project) => !isInsideSpacesFolder(project.workspaceRoot)),
     [allProjects],
   );
   const sidebarThreads = useThreadShells();

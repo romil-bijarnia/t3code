@@ -31,7 +31,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { environmentServerConfigsAtom } from "../state/server";
-import { isSpaceWorkspaceRoot } from "../spaces/spaces";
+import { isInsideSpacesFolder } from "../spaces/spaces";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -467,7 +467,7 @@ export function useHandleNewThread() {
   const handleNewThread = useNewThreadHandler();
   // A plain New chat should land in a project, not in one of the Spaces.
   const defaultProject =
-    orderedProjects.find((project) => !isSpaceWorkspaceRoot(project.workspaceRoot)) ??
+    orderedProjects.find((project) => !isInsideSpacesFolder(project.workspaceRoot)) ??
     orderedProjects[0];
 
   return {

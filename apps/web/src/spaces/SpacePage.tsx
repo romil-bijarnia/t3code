@@ -4,28 +4,27 @@ import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime"
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  ArrowUpIcon,
+  EllipsisIcon,
   FileIcon,
   FileTextIcon,
-  FolderOpenIcon,
-  PaletteIcon,
+  MessageSquareIcon,
   PlusIcon,
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
 
-import ChatMarkdown from "../components/ChatMarkdown";
 import {
   useProjectEntriesQuery,
   useProjectFileQuery,
 } from "../components/files/projectFilesQueryState";
-import { ProjectFavicon } from "../components/ProjectFavicon";
 import { Button } from "../components/ui/button";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -42,35 +41,25 @@ import { useEnvironmentScope } from "../state/session";
 import { shellEnvironment } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { PageEditor, type PageEditorHandle } from "./PageEditor";
+import { DeleteDialog, RenameDialog } from "./SpaceDialogs";
+import { SpaceIcon } from "./SpaceIcon";
+import { SpaceIconPicker } from "./SpaceIconPicker";
 import {
   entryName,
+  isRootPage,
   isVisibleEntry,
-  pageRelativePath,
+  pageChildrenDir,
+  pagesFromEntries,
   pageTitle,
-  SPACE_ABOUT_FILE,
   SPACE_FILES_DIR,
   SPACE_INSTRUCTIONS_FILE,
-  SPACE_PAGES_DIR,
-  SPACE_TABS,
-  type SpaceTab,
+  SPACE_ROOT_PAGE,
+  spaceAppearance,
   trashRelativePath,
-  uniqueName,
   useSpace,
 } from "./spaces";
 import { useSpaceActions } from "./useSpaceActions";
-
-const ProjectIconPickerDialog = lazy(() =>
-  import("../components/settings/ProjectIconPickerDialog").then((module) => ({
-    default: module.ProjectIconPickerDialog,
-  })),
-);
-
-const TAB_LABELS: Record<SpaceTab, string> = {
-  chats: "Chats",
-  pages: "Pages",
-  files: "Files",
-  instructions: "Instructions",
-};
 
 // Files travel to the server as one base64 message, so keep them modest.
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -78,176 +67,382 @@ const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export function SpacePage({
   spaceId,
   page,
-  tab,
 }: {
   readonly spaceId: string;
   readonly page: string | null;
-  readonly tab: SpaceTab;
 }) {
   const space = useSpace(spaceId);
   const projectsReady = useAllEnvironmentProjectSnapshotsReady();
   const navigate = useNavigate();
-  const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const { moveSpaceEntry, setSpaceIcon } = useSpaceActions();
+  const pagePath = page ?? SPACE_ROOT_PAGE;
+  const isRoot = isRootPage(pagePath);
+  const isInstructions = pagePath === SPACE_INSTRUCTIONS_FILE;
+  const { createPage, deletePage, deleteSpace, renamePage, renameSpace } = useSpaceActions();
   const openPath = useOpenPath(space);
+  const children = useProjectEntriesQuery(
+    space?.environmentId ?? ("" as EnvironmentProject["environmentId"]),
+    space?.workspaceRoot ?? "",
+    pageChildrenDir(pagePath),
+  );
+  const childPages = useMemo(() => pagesFromEntries(children.data?.entries ?? []), [children.data]);
+  const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
+  // Set right before navigating so the next page lands with the cursor in place:
+  // the title for a page that was just made, the body after a rename.
+  const [pendingFocus, setPendingFocus] = useState<{
+    page: string;
+    focus: "title" | "editor";
+  } | null>(null);
 
   const go = useCallback(
-    (search: { page?: string; tab?: SpaceTab }) =>
-      void navigate({ to: "/spaces/$spaceId", params: { spaceId }, search }),
+    (next?: string) =>
+      void navigate({
+        to: "/spaces/$spaceId",
+        params: { spaceId },
+        search: next ? { page: next } : {},
+      }),
     [navigate, spaceId],
   );
 
-  const deletePage = async () => {
-    if (!space || !page) return;
-    if (await moveSpaceEntry(space, page, trashRelativePath(page))) go({ tab: "pages" });
+  const addPage = async () => {
+    if (!space) return;
+    const created = await createPage(
+      space,
+      isInstructions ? SPACE_ROOT_PAGE : pagePath,
+      new Set(childPages.map((child) => child.title)),
+    );
+    if (created) {
+      setPendingFocus({ page: created, focus: "title" });
+      go(created);
+    }
   };
+
+  const copyMarkdown = async () => {
+    if (!space) return;
+    try {
+      const text = document.querySelector<HTMLElement>("[data-space-page-markdown]")?.dataset
+        .spacePageMarkdown;
+      await navigator.clipboard.writeText(text ?? "");
+      toastManager.add({ type: "success", title: "Copied as Markdown" });
+    } catch {
+      toastManager.add({ type: "error", title: "Could not copy page" });
+    }
+  };
+
+  const title = !space
+    ? "Space"
+    : isRoot
+      ? space.title
+      : isInstructions
+        ? "Instructions"
+        : pageTitle(pagePath);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
           <WorkspaceBreadcrumb ariaLabel="Space breadcrumb" className="min-w-0 flex-1">
-            <WorkspaceBreadcrumbItem current={page === null}>
-              {page === null ? (
-                <h1>{space?.title ?? "Space"}</h1>
+            <WorkspaceBreadcrumbItem current={isRoot}>
+              {isRoot ? (
+                <h1 className="flex items-center gap-2">
+                  {space ? <SpaceIcon appearance={spaceAppearance(space)} /> : null}
+                  <span className="truncate">{title}</span>
+                </h1>
               ) : (
-                <button type="button" onClick={() => go({ tab: "pages" })}>
-                  {space?.title ?? "Space"}
+                <button type="button" className="flex items-center gap-2" onClick={() => go()}>
+                  {space ? <SpaceIcon appearance={spaceAppearance(space)} /> : null}
+                  <span className="truncate">{space?.title ?? "Space"}</span>
                 </button>
               )}
             </WorkspaceBreadcrumbItem>
-            {page !== null ? (
+            {!isRoot ? (
               <>
                 <WorkspaceBreadcrumbSeparator />
                 <WorkspaceBreadcrumbItem current className="min-w-0">
-                  <WorkspaceBreadcrumbText className="truncate">
-                    {pageTitle(page)}
-                  </WorkspaceBreadcrumbText>
+                  <WorkspaceBreadcrumbText className="truncate">{title}</WorkspaceBreadcrumbText>
                 </WorkspaceBreadcrumbItem>
               </>
             ) : null}
           </WorkspaceBreadcrumb>
           {space ? (
             <div className="flex shrink-0 items-center gap-0.5">
-              {page !== null ? (
-                <ToolbarButton label="Delete page" onClick={() => void deletePage()}>
-                  <Trash2Icon />
-                </ToolbarButton>
-              ) : null}
-              <ToolbarButton label="Change icon" onClick={() => setIconPickerOpen(true)}>
-                <PaletteIcon />
-              </ToolbarButton>
-              <ToolbarButton label="Show in Finder" onClick={() => openPath(space.workspaceRoot)}>
-                <FolderOpenIcon />
-              </ToolbarButton>
+              <HeaderButton label="New page" onClick={() => void addPage()}>
+                <PlusIcon />
+              </HeaderButton>
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="icon-sm" variant="ghost-muted" aria-label="Page actions" />}
+                >
+                  <EllipsisIcon />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  {!isInstructions ? (
+                    <MenuItem onClick={() => setDialog("rename")}>Rename</MenuItem>
+                  ) : null}
+                  {isRoot ? (
+                    <MenuItem onClick={() => go(SPACE_INSTRUCTIONS_FILE)}>
+                      Assistant instructions
+                    </MenuItem>
+                  ) : null}
+                  <MenuItem onClick={() => void copyMarkdown()}>Copy as Markdown</MenuItem>
+                  <MenuItem
+                    onClick={() =>
+                      openPath(isRoot ? space.workspaceRoot : `${space.workspaceRoot}/${pagePath}`)
+                    }
+                  >
+                    {isRoot ? "Show in Finder" : "Show file in Finder"}
+                  </MenuItem>
+                  {!isInstructions ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem variant="destructive" onClick={() => setDialog("delete")}>
+                        Delete
+                      </MenuItem>
+                    </>
+                  ) : null}
+                </MenuPopup>
+              </Menu>
             </div>
           ) : null}
         </WorkspacePageHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {!space ? (
             <p className="mx-auto max-w-3xl px-6 py-12 text-base text-muted-foreground">
-              {projectsReady ? "This Space no longer exists." : "Loading..."}
+              {projectsReady ? "This space no longer exists." : "Loading..."}
             </p>
-          ) : page !== null ? (
-            <SpacePageView
-              key={page}
-              space={space}
-              page={page}
-              onRenamed={(next) => go({ page: next })}
-            />
           ) : (
-            <SpaceHome
+            <SpaceDocument
+              key={pagePath}
               space={space}
-              tab={tab}
-              onTab={(next) => go({ tab: next })}
-              onPage={(next) => go({ page: next })}
+              pagePath={pagePath}
+              childPages={childPages}
+              initialFocus={pendingFocus?.page === pagePath ? pendingFocus.focus : null}
+              onFocused={() => setPendingFocus(null)}
+              onOpenPage={go}
+              onNewPage={() => void addPage()}
+              onRenamed={(next) => {
+                if (next === pagePath) return;
+                setPendingFocus({ page: next, focus: "editor" });
+                go(next);
+              }}
             />
           )}
         </div>
       </div>
-      {space && iconPickerOpen ? (
-        <Suspense fallback={null}>
-          <ProjectIconPickerDialog
-            current={space.projectIcon?.kind === undefined ? null : space.projectIcon}
-            projectName={space.title}
-            open
-            onOpenChange={setIconPickerOpen}
-            onSelect={(icon) => void setSpaceIcon(space, icon)}
-          />
-        </Suspense>
+      {space && dialog === "rename" ? (
+        <RenameDialog
+          kind={isRoot ? "space" : "page"}
+          initialValue={title}
+          onClose={() => setDialog(null)}
+          onSave={async (value) => {
+            if (isRoot) {
+              await renameSpace(space, value);
+            } else {
+              const next = await renamePage(space, pagePath, value, childPages.length > 0);
+              if (next && next !== pagePath) {
+                setPendingFocus({ page: next, focus: "editor" });
+                go(next);
+              }
+            }
+          }}
+        />
+      ) : null}
+      {space && dialog === "delete" ? (
+        <DeleteDialog
+          kind={isRoot ? "space" : "page"}
+          title={title}
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            if (isRoot) {
+              if (await deleteSpace(space)) void navigate({ to: "/" });
+            } else if (await deletePage(space, pagePath, childPages.length > 0)) {
+              go();
+            }
+          }}
+        />
       ) : null}
     </SidebarInset>
   );
 }
 
-function SpaceHome({
+/**
+ * One page in ChatGPT's page frame: symbol, title, body, then the subpages
+ * list. The Space's own page also lists its files and chats.
+ */
+function SpaceDocument({
   space,
-  tab,
-  onTab,
-  onPage,
+  pagePath,
+  childPages,
+  initialFocus,
+  onFocused,
+  onOpenPage,
+  onNewPage,
+  onRenamed,
 }: {
   readonly space: EnvironmentProject;
-  readonly tab: SpaceTab;
-  readonly onTab: (tab: SpaceTab) => void;
-  readonly onPage: (page: string) => void;
+  readonly pagePath: string;
+  readonly childPages: ReturnType<typeof pagesFromEntries>;
+  readonly initialFocus: "title" | "editor" | null;
+  readonly onFocused: () => void;
+  readonly onOpenPage: (page?: string) => void;
+  readonly onNewPage: () => void;
+  readonly onRenamed: (next: string) => void;
 }) {
-  const handleNewThread = useNewThreadHandler();
+  const isRoot = isRootPage(pagePath);
+  const isInstructions = pagePath === SPACE_INSTRUCTIONS_FILE;
+  const file = useProjectFileQuery(space.environmentId, space.workspaceRoot, pagePath);
+  const canWrite = useEnvironmentScope(space.environmentId, AuthFilesystemWriteScope);
+  const { renamePage, renameSpace, setSpaceAppearance, writeSpaceFile } = useSpaceActions();
+  const editorRef = useRef<PageEditorHandle | null>(null);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  const [draftTitle, setDraftTitle] = useState<string | null>(null);
+  const [latestMarkdown, setLatestMarkdown] = useState<string | null>(null);
+
+  const savedTitle = isRoot ? space.title : isInstructions ? "Instructions" : pageTitle(pagePath);
+  const titleValue = draftTitle ?? savedTitle;
+  // A page whose file is still to be written reads as empty rather than broken.
+  const markdown = file.data?.contents ?? "";
+  const ready = !file.isPending || file.data !== null || file.readError !== null;
+
+  // Focus only once the page can take input: the write permission arrives a
+  // beat after mount, and a disabled field or read-only editor ignores focus.
+  useEffect(() => {
+    if (!canWrite || !ready || initialFocus === null) return;
+    if (initialFocus === "title") {
+      const title = titleRef.current;
+      if (!title) return;
+      title.focus();
+      title.select();
+    } else {
+      editorRef.current?.focusEnd();
+    }
+    onFocused();
+  }, [canWrite, initialFocus, onFocused, ready]);
+
+  const commitTitle = async () => {
+    const next = (draftTitle ?? "").trim();
+    setDraftTitle(null);
+    if (next.length === 0 || next === savedTitle) return;
+    if (isRoot) {
+      await renameSpace(space, next);
+      return;
+    }
+    const moved = await renamePage(space, pagePath, next, childPages.length > 0);
+    if (moved) onRenamed(moved);
+  };
+
+  const appearance = spaceAppearance(space);
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col px-6 pt-14 pb-24">
-      <div className="flex items-center gap-3">
-        <ProjectFavicon project={space} className="size-7" />
-        <h2 className="min-w-0 truncate text-3xl leading-tight">{space.title}</h2>
+    <div
+      className="mx-auto flex w-full max-w-[47rem] flex-col gap-6 px-6 pt-10 pb-24"
+      data-space-page-markdown={latestMarkdown ?? markdown}
+    >
+      <div className="group/page-title relative flex flex-col gap-6">
+        {isRoot ? (
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Change icon"
+                  className="self-start rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              }
+            >
+              <SpaceIcon appearance={appearance} size="large" />
+            </PopoverTrigger>
+            <PopoverPopup align="start">
+              <SpaceIconPicker
+                value={appearance}
+                onChange={(next) => void setSpaceAppearance(space, next)}
+              />
+            </PopoverPopup>
+          </Popover>
+        ) : null}
+        {isInstructions ? (
+          <h1 className="text-3xl leading-tight font-semibold">Instructions</h1>
+        ) : (
+          <textarea
+            ref={titleRef}
+            aria-label={isRoot ? "Space name" : "Page title"}
+            rows={1}
+            disabled={!canWrite}
+            className="block w-full min-w-0 resize-none overflow-hidden border-none bg-transparent text-3xl leading-tight font-semibold break-words outline-none [field-sizing:content] placeholder:text-muted-foreground/60"
+            placeholder="Untitled page"
+            value={titleValue}
+            onChange={(event) => setDraftTitle(event.target.value.replace(/\n/g, ""))}
+            onBlur={() => void commitTitle()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+                editorRef.current?.focusStart();
+              }
+              if (event.key === "Escape") {
+                setDraftTitle(null);
+                event.currentTarget.blur();
+              }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                editorRef.current?.focusStart();
+              }
+            }}
+          />
+        )}
       </div>
-      <div className="mt-3">
-        <EditableMarkdown
-          space={space}
-          relativePath={SPACE_ABOUT_FILE}
-          placeholder="Describe what this Space is for."
-          className="text-muted-foreground"
+      {isInstructions ? (
+        <p className="-mt-3 text-sm text-muted-foreground">
+          Every chat in this space follows these. Codex reads them from AGENTS.md and Claude through
+          CLAUDE.md.
+        </p>
+      ) : null}
+      {ready ? (
+        <PageEditor
+          ref={editorRef}
+          markdown={markdown}
+          readOnly={!canWrite}
+          placeholder={
+            isInstructions ? "Write instructions for the assistant" : "Type / for commands"
+          }
+          onChange={(next) => {
+            setLatestMarkdown(next);
+            void writeSpaceFile(space, pagePath, next);
+          }}
+          onCreateSubpage={isInstructions ? undefined : onNewPage}
         />
-      </div>
-      <button
-        type="button"
-        className="mt-8 flex h-14 w-full items-center justify-between rounded-2xl border border-border bg-card pr-3 pl-5 text-left text-base text-muted-foreground transition-colors hover:border-foreground/20 hover:text-foreground"
-        onClick={() => void handleNewThread(scopeProjectRef(space.environmentId, space.id))}
-      >
-        <span>New chat in {space.title}</span>
-        <span className="flex size-8 items-center justify-center rounded-full bg-foreground/90 text-background">
-          <ArrowUpIcon className="size-4" />
-        </span>
-      </button>
-      <div className="mt-10 flex items-center gap-6 border-b border-border" role="tablist">
-        {SPACE_TABS.map((option) => (
-          <button
-            key={option}
-            type="button"
-            role="tab"
-            aria-selected={tab === option}
-            className={cn(
-              "-mb-px border-b pb-2.5 text-base transition-colors",
-              tab === option
-                ? "border-foreground text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => onTab(option)}
-          >
-            {TAB_LABELS[option]}
-          </button>
-        ))}
-      </div>
-      <div className="pt-3">
-        {tab === "chats" ? <SpaceChats space={space} /> : null}
-        {tab === "pages" ? <SpacePages space={space} onPage={onPage} /> : null}
-        {tab === "files" ? <SpaceFiles space={space} /> : null}
-        {tab === "instructions" ? <SpaceInstructions space={space} /> : null}
-      </div>
+      ) : null}
+      {!isInstructions && (isRoot || childPages.length > 0) ? (
+        <section className="mt-8 flex flex-col gap-1 select-none" aria-label="Subpages">
+          <h2 className="text-sm font-medium text-muted-foreground">Subpages</h2>
+          <ul className="-mx-2">
+            {childPages.map((child) => (
+              <li key={child.relativePath}>
+                <Row onClick={() => onOpenPage(child.relativePath)}>
+                  <FileTextIcon className="size-4 text-muted-foreground" />
+                  <span className="truncate">{child.title}</span>
+                </Row>
+              </li>
+            ))}
+            {canWrite ? (
+              <li>
+                <Row muted onClick={onNewPage}>
+                  <PlusIcon className="size-4" />
+                  <span>New page</span>
+                </Row>
+              </li>
+            ) : null}
+          </ul>
+        </section>
+      ) : null}
+      {isRoot ? <SpaceFiles space={space} /> : null}
+      {isRoot ? <SpaceChats space={space} /> : null}
     </div>
   );
 }
 
 function SpaceChats({ space }: { readonly space: EnvironmentProject }) {
   const navigate = useNavigate();
+  const handleNewThread = useNewThreadHandler();
   const threads = useThreadShells();
   const chats = useMemo(
     () =>
@@ -261,92 +456,36 @@ function SpaceChats({ space }: { readonly space: EnvironmentProject }) {
         .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [space.environmentId, space.id, threads],
   );
-  if (chats.length === 0) return <EmptyLine>No chats yet.</EmptyLine>;
-
   return (
-    <ul>
-      {chats.map((thread) => (
-        <li key={thread.id}>
+    <section className="mt-8 flex flex-col gap-1 select-none" aria-label="Chats">
+      <h2 className="text-sm font-medium text-muted-foreground">Chats</h2>
+      <ul className="-mx-2">
+        {chats.map((thread) => (
+          <li key={thread.id}>
+            <Row
+              onClick={() =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+                })
+              }
+            >
+              <MessageSquareIcon className="size-4 text-muted-foreground" />
+              <span className="truncate">{thread.title}</span>
+            </Row>
+          </li>
+        ))}
+        <li>
           <Row
-            onClick={() =>
-              void navigate({
-                to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-              })
-            }
+            muted
+            onClick={() => void handleNewThread(scopeProjectRef(space.environmentId, space.id))}
           >
-            <span className="truncate">{thread.title}</span>
+            <PlusIcon className="size-4" />
+            <span>New chat</span>
           </Row>
         </li>
-      ))}
-    </ul>
-  );
-}
-
-function SpacePages({
-  space,
-  onPage,
-}: {
-  readonly space: EnvironmentProject;
-  readonly onPage: (page: string) => void;
-}) {
-  const { data, refresh } = useProjectEntriesQuery(
-    space.environmentId,
-    space.workspaceRoot,
-    SPACE_PAGES_DIR,
-  );
-  const { writeSpaceFile, moveSpaceEntry } = useSpaceActions();
-  const canWrite = useEnvironmentScope(space.environmentId, AuthFilesystemWriteScope);
-  const pages = useMemo(
-    () =>
-      (data?.entries ?? [])
-        .filter(
-          (entry) =>
-            entry.kind === "file" &&
-            isVisibleEntry(entry.path) &&
-            entry.path.toLowerCase().endsWith(".md"),
-        )
-        .map((entry) => entry.path)
-        .toSorted((left, right) => pageTitle(left).localeCompare(pageTitle(right))),
-    [data],
-  );
-
-  const newPage = async () => {
-    const title = uniqueName("Untitled", new Set(pages.map(pageTitle)));
-    const relativePath = pageRelativePath(title);
-    if (await writeSpaceFile(space, relativePath, "")) {
-      refresh();
-      onPage(relativePath);
-    }
-  };
-
-  return (
-    <ul>
-      <li>
-        <Row muted disabled={!canWrite} onClick={() => void newPage()}>
-          <PlusIcon className="size-4" />
-          <span>New page</span>
-        </Row>
-      </li>
-      {pages.map((page) => (
-        <li key={page}>
-          <Row
-            onClick={() => onPage(page)}
-            action={
-              <RowAction
-                label={`Delete ${pageTitle(page)}`}
-                onClick={async () => {
-                  if (await moveSpaceEntry(space, page, trashRelativePath(page))) refresh();
-                }}
-              />
-            }
-          >
-            <FileTextIcon className="size-4 text-muted-foreground" />
-            <span className="truncate">{pageTitle(page)}</span>
-          </Row>
-        </li>
-      ))}
-    </ul>
+      </ul>
+    </section>
   );
 }
 
@@ -375,22 +514,22 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
     if (!list || list.length === 0 || !canWrite) return;
     const taken = new Set(files.map(entryName));
     setUploading((count) => count + list.length);
-    for (const file of Array.from(list)) {
+    for (const item of Array.from(list)) {
       try {
-        if (file.size > MAX_UPLOAD_BYTES) {
+        if (item.size > MAX_UPLOAD_BYTES) {
           toastManager.add({
             type: "error",
-            title: `${file.name} is too large`,
+            title: `${item.name} is too large`,
             description: "Files up to 25 MB can be added here. Use Show in Finder for bigger ones.",
           });
           continue;
         }
-        const name = uniqueFileName(file.name, taken);
+        const name = uniqueFileName(item.name, taken);
         taken.add(name);
         await writeSpaceFile(
           space,
           `${SPACE_FILES_DIR}/${name}`,
-          await readAsBase64(file),
+          await readAsBase64(item),
           "base64",
         );
       } finally {
@@ -401,9 +540,10 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
   };
 
   return (
-    <div
+    <section
+      aria-label="Files"
       className={cn(
-        "-mx-3 rounded-xl border border-transparent px-3 transition-colors",
+        "mt-8 flex flex-col gap-1 rounded-xl border border-transparent select-none",
         dragging && "border-dashed border-foreground/30 bg-accent/40",
       )}
       onDragOver={(event) => {
@@ -421,6 +561,7 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
         void addFiles(event.dataTransfer.files);
       }}
     >
+      <h2 className="text-sm font-medium text-muted-foreground">Files</h2>
       <input
         ref={inputRef}
         type="file"
@@ -431,185 +572,37 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
           event.currentTarget.value = "";
         }}
       />
-      <ul>
-        <li>
-          <Row muted disabled={!canWrite} onClick={() => inputRef.current?.click()}>
-            <UploadIcon className="size-4" />
-            <span>{uploading > 0 ? "Adding..." : "Add files"}</span>
-          </Row>
-        </li>
-        {files.map((file) => (
-          <li key={file}>
+      <ul className="-mx-2">
+        {files.map((path) => (
+          <li key={path}>
             <Row
-              onClick={() => openPath(`${space.workspaceRoot}/${file}`)}
+              onClick={() => openPath(`${space.workspaceRoot}/${path}`)}
               action={
-                <RowAction
-                  label={`Delete ${entryName(file)}`}
+                <HeaderButton
+                  label={`Delete ${entryName(path)}`}
                   onClick={async () => {
-                    if (await moveSpaceEntry(space, file, trashRelativePath(file))) refresh();
+                    if (await moveSpaceEntry(space, path, trashRelativePath(path))) refresh();
                   }}
-                />
+                >
+                  <Trash2Icon />
+                </HeaderButton>
               }
             >
               <FileIcon className="size-4 text-muted-foreground" />
-              <span className="truncate">{entryName(file)}</span>
+              <span className="truncate">{entryName(path)}</span>
             </Row>
           </li>
         ))}
+        {canWrite ? (
+          <li>
+            <Row muted onClick={() => inputRef.current?.click()}>
+              <UploadIcon className="size-4" />
+              <span>{uploading > 0 ? "Adding..." : "Add files"}</span>
+            </Row>
+          </li>
+        ) : null}
       </ul>
-      {files.length === 0 ? (
-        <EmptyLine>Drop files here. Chats in this Space can read them.</EmptyLine>
-      ) : null}
-    </div>
-  );
-}
-
-function SpaceInstructions({ space }: { readonly space: EnvironmentProject }) {
-  return (
-    <div className="flex flex-col gap-3 pt-2">
-      <p className="text-sm text-muted-foreground">
-        Every chat in this Space follows these. Codex reads them from AGENTS.md and Claude through
-        CLAUDE.md.
-      </p>
-      <EditableMarkdown space={space} relativePath={SPACE_INSTRUCTIONS_FILE} alwaysEditing />
-    </div>
-  );
-}
-
-function SpacePageView({
-  space,
-  page,
-  onRenamed,
-}: {
-  readonly space: EnvironmentProject;
-  readonly page: string;
-  readonly onRenamed: (page: string) => void;
-}) {
-  const { moveSpaceEntry } = useSpaceActions();
-  const [title, setTitle] = useState(pageTitle(page));
-
-  const rename = async () => {
-    const next = pageRelativePath(title);
-    if (next === page) return;
-    if (title.trim().length === 0) {
-      setTitle(pageTitle(page));
-      return;
-    }
-    if (await moveSpaceEntry(space, page, next)) onRenamed(next);
-    else setTitle(pageTitle(page));
-  };
-
-  return (
-    <div className="mx-auto flex max-w-3xl flex-col px-6 pt-14 pb-24">
-      <input
-        aria-label="Page title"
-        className="w-full bg-transparent text-3xl leading-tight outline-none placeholder:text-muted-foreground"
-        placeholder="Untitled"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        onBlur={() => void rename()}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-          if (event.key === "Escape") {
-            setTitle(pageTitle(page));
-            event.currentTarget.blur();
-          }
-        }}
-      />
-      <div className="mt-6">
-        <EditableMarkdown space={space} relativePath={page} placeholder="Start writing..." />
-      </div>
-    </div>
-  );
-}
-
-/**
- * Shows a Markdown file and turns into a plain editor on double-click (or
- * always, for instructions). Leaving the editor saves.
- */
-function EditableMarkdown({
-  space,
-  relativePath,
-  placeholder,
-  alwaysEditing = false,
-  className,
-}: {
-  readonly space: EnvironmentProject;
-  readonly relativePath: string;
-  readonly placeholder?: string;
-  readonly alwaysEditing?: boolean;
-  readonly className?: string;
-}) {
-  const file = useProjectFileQuery(space.environmentId, space.workspaceRoot, relativePath);
-  const { writeSpaceFile } = useSpaceActions();
-  const canWrite = useEnvironmentScope(space.environmentId, AuthFilesystemWriteScope);
-  const saved = file.data?.contents ?? "";
-  const [draft, setDraft] = useState<string | null>(null);
-  const editing = alwaysEditing || draft !== null;
-  const value = draft ?? saved;
-  const [savedValue, setSavedValue] = useState<string | null>(null);
-
-  const save = async (next: string) => {
-    if (next === (savedValue ?? saved)) return true;
-    const ok = await writeSpaceFile(space, relativePath, next);
-    if (ok) {
-      setSavedValue(next);
-      file.refresh();
-    }
-    return ok;
-  };
-
-  if (!editing) {
-    const text = savedValue ?? saved;
-    return text.trim().length === 0 ? (
-      <button
-        type="button"
-        disabled={!canWrite}
-        className={cn("text-left text-base text-muted-foreground/70", className)}
-        onClick={() => setDraft(text)}
-      >
-        {file.isPending && !file.data ? "" : placeholder}
-      </button>
-    ) : (
-      <div
-        className={cn("text-base", className)}
-        onDoubleClick={() => {
-          if (canWrite) setDraft(text);
-        }}
-      >
-        <ChatMarkdown text={text} cwd={space.workspaceRoot} environmentId={space.environmentId} />
-      </div>
-    );
-  }
-
-  return (
-    <textarea
-      aria-label={relativePath}
-      autoFocus={!alwaysEditing}
-      disabled={!canWrite}
-      className={cn(
-        "min-h-32 w-full resize-none bg-transparent font-sans text-base leading-relaxed outline-none [field-sizing:content] placeholder:text-muted-foreground/70",
-        alwaysEditing && "min-h-64 rounded-xl border border-border bg-card p-4",
-      )}
-      placeholder={placeholder}
-      value={value}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        void save(value).then((ok) => {
-          if (ok && !alwaysEditing) setDraft(null);
-        });
-      }}
-      onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "s") {
-          event.preventDefault();
-          void save(value);
-        }
-        if (event.key === "Escape" && !alwaysEditing) {
-          event.preventDefault();
-          event.currentTarget.blur();
-        }
-      }}
-    />
+    </section>
   );
 }
 
@@ -636,30 +629,27 @@ function Row({
   onClick,
   action,
   muted = false,
-  disabled = false,
 }: {
   readonly children: ReactNode;
   readonly onClick: () => void;
   readonly action?: ReactNode;
   readonly muted?: boolean;
-  readonly disabled?: boolean;
 }) {
   return (
     <div className="group/row relative">
       <button
         type="button"
-        disabled={disabled}
         className={cn(
-          "-mx-3 flex h-11 w-[calc(100%+1.5rem)] items-center gap-3 rounded-lg px-3 text-left text-base transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50",
+          "flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-base transition-colors hover:bg-accent",
           muted ? "text-muted-foreground hover:text-foreground" : "text-foreground",
-          action !== undefined && "pr-11",
+          action !== undefined && "pr-10",
         )}
         onClick={onClick}
       >
         {children}
       </button>
       {action ? (
-        <div className="absolute top-1/2 right-0 -translate-y-1/2 opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100">
+        <div className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity group-focus-within/row:opacity-100 group-hover/row:opacity-100">
           {action}
         </div>
       ) : null}
@@ -667,19 +657,7 @@ function Row({
   );
 }
 
-function RowAction({ label, onClick }: { readonly label: string; readonly onClick: () => void }) {
-  return (
-    <ToolbarButton label={label} onClick={onClick}>
-      <Trash2Icon />
-    </ToolbarButton>
-  );
-}
-
-function EmptyLine({ children }: { readonly children: ReactNode }) {
-  return <p className="py-3 text-base text-muted-foreground">{children}</p>;
-}
-
-function ToolbarButton({
+function HeaderButton({
   label,
   onClick,
   children,

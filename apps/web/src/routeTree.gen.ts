@@ -17,6 +17,7 @@ import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as SpacesTrashRouteImport } from './routes/spaces.trash'
 import { Route as SpacesSpaceIdRouteImport } from './routes/spaces.$spaceId'
 import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
@@ -76,6 +77,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
+} as any)
+const SpacesTrashRoute = SpacesTrashRouteImport.update({
+  id: '/spaces/trash',
+  path: '/spaces/trash',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SpacesSpaceIdRoute = SpacesSpaceIdRouteImport.update({
   id: '/spaces/$spaceId',
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
+  '/spaces/trash': typeof SpacesTrashRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
+  '/spaces/trash': typeof SpacesTrashRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -265,6 +273,7 @@ export interface FileRoutesById {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/storage': typeof SettingsStorageRoute
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
+  '/spaces/trash': typeof SpacesTrashRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -297,6 +306,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/storage'
     | '/spaces/$spaceId'
+    | '/spaces/trash'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -325,6 +335,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/storage'
     | '/spaces/$spaceId'
+    | '/spaces/trash'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -355,6 +366,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/storage'
     | '/spaces/$spaceId'
+    | '/spaces/trash'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -371,6 +383,7 @@ export interface RootRouteChildren {
   AppsAppIdRoute: typeof AppsAppIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
+  SpacesTrashRoute: typeof SpacesTrashRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -430,6 +443,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/spaces/trash': {
+      id: '/spaces/trash'
+      path: '/spaces/trash'
+      fullPath: '/spaces/trash'
+      preLoaderRoute: typeof SpacesTrashRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/spaces/$spaceId': {
       id: '/spaces/$spaceId'
@@ -639,6 +659,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppsAppIdRoute: AppsAppIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
+  SpacesTrashRoute: SpacesTrashRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
