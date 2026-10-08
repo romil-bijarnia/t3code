@@ -64,7 +64,7 @@ function CommandDialogPopup({
         <CommandDialogPrimitive.Popup
           className={cn(
             DIALOG_POPUP_CLASS,
-            "pointer-events-auto max-h-105 max-w-xl text-foreground",
+            "pointer-events-auto max-h-126 max-w-130 text-foreground",
             className,
           )}
           data-slot="command-dialog-popup"
@@ -169,7 +169,11 @@ function CommandGroupLabel({
   ...props
 }: React.ComponentProps<typeof AutocompleteGroupLabel>) {
   return (
-    <AutocompleteGroupLabel className={className} data-slot="command-group-label" {...props} />
+    <AutocompleteGroupLabel
+      className={cn("px-2 pt-2 pb-1 text-sm font-normal text-muted-foreground", className)}
+      data-slot="command-group-label"
+      {...props}
+    />
   );
 }
 

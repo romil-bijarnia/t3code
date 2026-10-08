@@ -612,7 +612,7 @@ export function buildRootGroups(input: {
 export function getCommandPaletteInputPlaceholder(mode: CommandPaletteMode): string {
   switch (mode) {
     case "root":
-      return "Search commands, projects, and threads...";
+      return "Search chats or run a command";
     case "root-browse":
       return "Enter project path (e.g. ~/projects/my-app)";
     case "submenu":
