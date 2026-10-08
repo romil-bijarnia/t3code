@@ -191,7 +191,7 @@ function CampusNotice({
   const action =
     issue.reason === "sign_in_required" ? (
       <Button size="sm" disabled={signingIn || !environmentId} onClick={() => void startSignIn()}>
-        {signingIn ? "Waiting for the sign-in window…" : "Sign in"}
+        {signingIn ? "Signing in…" : "Sign in"}
       </Button>
     ) : (
       <Button size="sm" variant="outline" onClick={onRefresh}>
@@ -215,7 +215,7 @@ function CampusNotice({
       <p className="max-w-md text-sm text-muted-foreground">{issue.detail}</p>
       {issue.reason === "sign_in_required" ? (
         <p className="max-w-md text-xs text-muted-foreground">
-          A sign-in window opens on this Mac; finish it there and this page fills in.
+          Signs in with the Deakin account saved in your Keychain; nothing opens on screen.
         </p>
       ) : null}
       <div className="pt-2">{action}</div>

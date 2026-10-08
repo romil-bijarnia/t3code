@@ -141,3 +141,50 @@ export function withStableKeys<T>(
     return [count === 0 ? base : `${base}#${count}`, row];
   });
 }
+
+/** OnTrack grade tiers in the order the ladder is climbed. */
+export const GRADE_TIERS = [
+  { grade: 0, short: "P", name: "Pass" },
+  { grade: 1, short: "C", name: "Credit" },
+  { grade: 2, short: "D", name: "Distinction" },
+  { grade: 3, short: "HD", name: "High Distinction" },
+] as const;
+
+export function gradeName(grade: number | null): string | null {
+  return GRADE_TIERS.find((tier) => tier.grade === grade)?.name ?? null;
+}
+
+/** Tasks a unit needs for its target grade, and how many of them are done. */
+export function targetProgress(
+  tasks: ReadonlyArray<OnTrackTask>,
+  targetGrade: number | null,
+): { readonly done: number; readonly needed: number } {
+  const needed = tasks.filter(
+    (task) => targetGrade === null || task.targetGrade === null || task.targetGrade <= targetGrade,
+  );
+  return {
+    done: needed.filter((task) => task.status === "complete").length,
+    needed: needed.length,
+  };
+}
+
+/** Open tasks that OnTrack is waiting on the student for, soonest first. */
+export const NEEDS_YOU_STATUSES = new Set([
+  "fix_and_resubmit",
+  "redo",
+  "discuss",
+  "demonstrate",
+  "need_help",
+  "time_exceeded",
+  "feedback_exceeded",
+  "do_not_resubmit",
+]);
+
+export function needsYou(task: OnTrackTask, now = new Date()): boolean {
+  if (task.status === "complete") return false;
+  return NEEDS_YOU_STATUSES.has(task.status) || isOverdue(task, now);
+}
+
+export function isWaitingOnMarking(task: OnTrackTask): boolean {
+  return task.status === "ready_for_feedback" || task.status === "ready_to_mark";
+}

@@ -95,19 +95,25 @@ describe("OnTrack", () => {
   it("shapes the overview and keeps the lane's cache note", () => {
     const overview = normalizeOnTrackOverview({
       units: { units: [unit, { unitCode: "broken" }] },
-      tasks: {
-        tasks: [task],
-        cache: {
-          cached: true,
-          cachedAt: "2026-08-31T02:07:28.064Z",
-          liveError: "Microsoft browser broker is required but is not running on 127.0.0.1:9223.",
+      projects: [
+        {
+          project: { projectId: 178581, targetGrade: 3, submittedGrade: null },
+          tasks: [{ ...task, taskTargetGrade: 1, taskDefinition: { weighting: 5 } }],
+          cache: {
+            cached: true,
+            cachedAt: "2026-08-31T02:07:28.064Z",
+            liveError: "Microsoft browser broker is required but is not running on 127.0.0.1:9223.",
+          },
         },
-      },
+      ],
       fetchedAt: "2026-10-08T12:00:00.000Z",
     });
     assert.equal(overview.units.length, 1);
+    assert.equal(overview.units[0]?.targetGrade, 3);
     assert.equal(overview.tasks[0]?.dueDate, "2026-09-11");
     assert.equal(overview.tasks[0]?.uploadRequirements.length, 1);
+    assert.equal(overview.tasks[0]?.targetGrade, 1);
+    assert.equal(overview.tasks[0]?.weighting, 5);
     assert.deepEqual(overview.meta, {
       fetchedAt: "2026-08-31T02:07:28.064Z",
       stale: true,

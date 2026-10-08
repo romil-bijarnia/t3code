@@ -205,6 +205,8 @@ const parseLsofOutput = (
       continue;
     }
     if (tag === "n") {
+      // The app's own server and the shell that launched it are not previews.
+      if (pid === process.pid || pid === process.ppid) continue;
       const portMatch = parsePortFromLsofName(value);
       if (portMatch == null) continue;
       const url = `http://localhost:${portMatch}`;

@@ -20,6 +20,23 @@ const layerWithLane = (handler: Handler, online = true) =>
           laneOnline: Effect.succeed(online),
           ensureLane: Effect.succeed(online),
           readLaneFile: () => Effect.succeed(null),
+          laneRun: (_lane, args) =>
+            handler(`lane:${args[0] ?? ""}`, {}).pipe(
+              Effect.map((payload) => ({
+                ok: true,
+                reason: null,
+                detail: null,
+                payload: payload as Record<string, unknown>,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  reason: "sign_in_required",
+                  detail: error.detail,
+                  payload: {},
+                }),
+              ),
+            ),
         }),
       ),
     ),
@@ -59,7 +76,11 @@ it.effect("serves the kept overview until a refresh is asked for", () =>
     Effect.provide(
       layerWithLane((tool) => {
         reads += 1;
-        return Effect.succeed(tool === "list_units" ? { units: [unit] } : { tasks: [task] });
+        return Effect.succeed(
+          tool === "list_units"
+            ? { units: [unit] }
+            : { project: { projectId: 1, targetGrade: 2 }, tasks: [task] },
+        );
       }),
     ),
   ),

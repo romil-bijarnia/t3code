@@ -26,9 +26,10 @@ import {
 
 type Raw = Record<string, unknown>;
 
-const asRecord = (value: unknown): Raw =>
+export const asRecord = (value: unknown): Raw =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Raw) : {};
-const asArray = (value: unknown): ReadonlyArray<unknown> => (Array.isArray(value) ? value : []);
+export const asArray = (value: unknown): ReadonlyArray<unknown> =>
+  Array.isArray(value) ? value : [];
 const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 const str = (value: unknown, fallback = ""): string =>
@@ -85,6 +86,8 @@ export function normalizeOnTrackUnit(raw: unknown): OnTrackUnit | null {
     startDate: text(unit.startDate),
     endDate: text(unit.endDate),
     isCurrent: unit.isCurrent !== false,
+    targetGrade: numOrNull(unit.targetGrade),
+    submittedGrade: numOrNull(unit.submittedGrade),
   };
 }
 
@@ -115,29 +118,58 @@ export function normalizeOnTrackTask(raw: unknown): OnTrackTask | null {
         ? [{ name: requirement.name, type: str(requirement.type, "document") }]
         : [];
     }),
+    targetGrade:
+      numOrNull(task.taskTargetGrade) ?? numOrNull(asRecord(task.taskDefinition).targetGrade),
+    weighting: numOrNull(asRecord(task.taskDefinition).weighting),
   };
 }
 
+/** The lane's project-details answer, with or without its `payload` wrapper. */
+function projectDetailsOf(raw: unknown): Raw {
+  const envelope = asRecord(raw);
+  return "payload" in envelope ? asRecord(envelope.payload) : envelope;
+}
+
+/**
+ * The overview joins the unit list with each unit's project details, which
+ * carry the grade target and every task's tier and weighting. A unit whose
+ * details are missing keeps its row with the grade fields empty.
+ */
 export function normalizeOnTrackOverview(input: {
   readonly units: unknown;
-  readonly tasks: unknown;
+  readonly projects: ReadonlyArray<unknown>;
   readonly fetchedAt: string;
 }): CampusOnTrackOverviewResult {
-  const units = asArray(asRecord(input.units).units).flatMap((unit) => {
-    const normalized = normalizeOnTrackUnit(unit);
-    return normalized ? [normalized] : [];
+  const detailsByProject = new Map(
+    input.projects.flatMap((raw) => {
+      const details = projectDetailsOf(raw);
+      const projectId = asRecord(details.project).projectId;
+      return typeof projectId === "number" ? [[projectId, details] as const] : [];
+    }),
+  );
+  const units = asArray(asRecord(input.units).units).flatMap((rawUnit) => {
+    const unit = normalizeOnTrackUnit(rawUnit);
+    if (!unit) return [];
+    const project = asRecord(detailsByProject.get(unit.projectId)?.project);
+    return [
+      {
+        ...unit,
+        targetGrade: numOrNull(project.targetGrade),
+        submittedGrade: numOrNull(project.submittedGrade),
+      },
+    ];
   });
-  const tasks = asArray(asRecord(input.tasks).tasks).flatMap((task) => {
-    const normalized = normalizeOnTrackTask(task);
-    return normalized ? [normalized] : [];
-  });
+  const tasks = [...detailsByProject.values()].flatMap((details) =>
+    asArray(details.tasks).flatMap((task) => {
+      const normalized = normalizeOnTrackTask(task);
+      return normalized ? [normalized] : [];
+    }),
+  );
+  const staleProject = input.projects
+    .map((raw) => cacheMeta(raw, input.fetchedAt))
+    .find((candidate) => candidate.stale);
   const unitsMeta = cacheMeta(input.units, input.fetchedAt);
-  const tasksMeta = cacheMeta(input.tasks, input.fetchedAt);
-  return {
-    units,
-    tasks,
-    meta: tasksMeta.stale ? tasksMeta : unitsMeta,
-  };
+  return { units, tasks, meta: staleProject ?? unitsMeta };
 }
 
 function normalizeComment(raw: unknown): OnTrackComment | null {
@@ -189,12 +221,12 @@ export function normalizeOnTrackTaskDetails(input: {
   };
 }
 
-function normalizeOutlookMessage(raw: unknown): OutlookMessage {
+function normalizeOutlookMessage(raw: unknown, subject: string | null = null): OutlookMessage {
   const message = asRecord(raw);
   return {
     ref: text(message.ref),
-    sender: text(message.sender),
-    subject: text(message.subject),
+    sender: text(message.sender) ?? text(message.senderAddress),
+    subject: text(message.subject) ?? subject,
     receivedAt: text(message.receivedAt) ?? text(message.timestamp),
     preview: text(message.preview),
     body: text(message.body),
@@ -210,7 +242,9 @@ export function normalizeOutlookInbox(input: {
 }): CampusOutlookInboxResult {
   const envelope = asRecord(input.raw);
   return {
-    messages: asArray(envelope.messages ?? envelope.items).map(normalizeOutlookMessage),
+    messages: asArray(envelope.messages ?? envelope.items).map((item) =>
+      normalizeOutlookMessage(item),
+    ),
     meta: meta({ fetchedAt: input.fetchedAt }),
   };
 }
@@ -220,8 +254,11 @@ export function normalizeOutlookEmail(input: {
   readonly fetchedAt: string;
 }): CampusOutlookEmailResult {
   const envelope = asRecord(input.raw);
+  const subject = text(envelope.subject);
   return {
-    messages: asArray(envelope.items ?? envelope.messages).map(normalizeOutlookMessage),
+    messages: asArray(envelope.items ?? envelope.messages).map((item) =>
+      normalizeOutlookMessage(item, subject),
+    ),
     meta: meta({ fetchedAt: input.fetchedAt }),
   };
 }

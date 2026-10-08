@@ -9,9 +9,11 @@ import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { LANE_SCRIPT_FILENAME, LANE_SCRIPT_SOURCE } from "./laneScriptSource.ts";
 import { laneDetail } from "./normalize.ts";
 
 /**
@@ -60,8 +62,38 @@ export class CampusTools extends Context.Service<
     readonly ensureLane: Effect.Effect<boolean>;
     /** A file under the lane's data directory, or null when it is not there. */
     readonly readLaneFile: (relativePath: string) => Effect.Effect<string | null>;
+    /**
+     * Runs the fork's own lane script (sign-in, inbox, mail) against the broker
+     * and returns its one-line JSON answer.
+     */
+    readonly laneRun: (
+      lane: CampusLane,
+      args: ReadonlyArray<string>,
+    ) => Effect.Effect<LaneRunResult, CampusToolError>;
   }
 >()("t3/campus/CampusTools") {}
+
+export interface LaneRunResult {
+  readonly ok: boolean;
+  readonly reason: string | null;
+  readonly detail: string | null;
+  /** The script's full answer, for commands that return data. */
+  readonly payload: Record<string, unknown>;
+}
+
+const LANE_RUN_TIMEOUT_MS = 200_000;
+const decodeLaneRunResult = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ok: Schema.Boolean,
+      reason: Schema.optional(Schema.String),
+      detail: Schema.optional(Schema.String),
+    }),
+  ),
+);
+const decodeJsonObject = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 /** Tool answers are free-form JSON text; anything else comes back as the text itself. */
@@ -279,12 +311,82 @@ const make = Effect.gen(function* () {
         .then((text): string | null => text)
         .catch((): string | null => null),
     );
+  // Lane scripts still running when the server shuts down; a live child keeps
+  // the old process (and its port) alive, so they are stopped with it.
+  const scripts = new Set<NodeChildProcess.ChildProcess>();
+
+  // The lane's MCP servers and scripts die with the server, so a restart never
+  // leaves orphans holding the broker's pages or the listening port.
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(async () => {
+      for (const child of scripts) child.kill();
+      scripts.clear();
+      for (const pending of clients.values()) {
+        await pending.then((client) => client.close()).catch(() => {});
+      }
+      clients.clear();
+    }),
+  );
+
+  const laneRun = (lane: CampusLane, args: ReadonlyArray<string>) =>
+    Effect.tryPromise({
+      try: async (): Promise<LaneRunResult> => {
+        const scriptPath = NodePath.join(config.dataDir, LANE_SCRIPT_FILENAME);
+        await NodeFS.promises.writeFile(scriptPath, LANE_SCRIPT_SOURCE, { mode: 0o600 });
+        const env = laneEnvironment(config);
+        const runtime = nodeRuntime(env);
+        const stdout = await new Promise<string>((resolve, reject) => {
+          const child = NodeChildProcess.execFile(
+            runtime.command,
+            [scriptPath, ...args],
+            {
+              cwd: config.harnessDir,
+              env: { ...runtime.env, T3_LANE_HARNESS_DIR: config.harnessDir },
+              timeout: LANE_RUN_TIMEOUT_MS,
+              maxBuffer: 4 * 1024 * 1024,
+            },
+            (error, out) => {
+              scripts.delete(child);
+              // The script reports its own failure on stdout and exits non-zero.
+              if (error && !String(out).trim()) reject(error);
+              else resolve(String(out));
+            },
+          );
+          scripts.add(child);
+        });
+        const lastLine = stdout.trim().split(/\r?\n/).at(-1) ?? "";
+        const decoded = decodeLaneRunResult(lastLine);
+        if (Option.isNone(decoded)) {
+          return {
+            ok: false,
+            reason: "unreadable",
+            detail: "The lane gave no readable answer.",
+            payload: {},
+          };
+        }
+        return {
+          ok: decoded.value.ok,
+          reason: decoded.value.reason ?? null,
+          detail: decoded.value.detail ?? null,
+          payload: Option.getOrElse(decodeJsonObject(lastLine), () => ({})),
+        };
+      },
+      catch: (cause) =>
+        new CampusToolError({
+          lane,
+          tool: `lane ${args[0] ?? ""}`,
+          category: "unavailable",
+          detail: laneDetail(cause instanceof Error ? cause.message : String(cause)),
+          cause,
+        }),
+    });
+
   const laneOnline = Effect.promise(() => probePort(config.brokerPort));
   const ensureLane = Effect.promise(async () =>
     (await probePort(config.brokerPort)) ? true : startBroker(config),
   );
 
-  return CampusTools.of({ call, laneOnline, ensureLane, readLaneFile });
+  return CampusTools.of({ call, laneOnline, ensureLane, readLaneFile, laneRun });
 });
 
 export const layer = Layer.effect(CampusTools, make);

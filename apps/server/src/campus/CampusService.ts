@@ -31,6 +31,8 @@ import * as Schema from "effect/Schema";
 
 import * as CampusTools from "./CampusTools.ts";
 import {
+  asArray,
+  asRecord,
   classifyLaneFailure,
   deakinSignIn,
   microsoftSignIn,
@@ -85,7 +87,6 @@ export class CampusService extends Context.Service<
 const CAMPUS_APPS: ReadonlyArray<CampusApp> = ["ontrack", "deakinsync", "teams", "outlook"];
 /** How long a kept answer counts as current before a page's read goes back to the lane. */
 const FRESH_FOR_MS = 5 * 60_000;
-const SIGN_IN_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_LIST_TOP = 20;
 
 const laneOf = (app: CampusApp): CampusTools.CampusLane =>
@@ -100,8 +101,7 @@ const LaneCacheFile = Schema.fromJsonString(
 );
 const decodeLaneCacheFile = Schema.decodeUnknownOption(LaneCacheFile);
 const ONTRACK_UNITS_FILE = "cache/list_units_current_true.json";
-const ONTRACK_TASKS_FILE =
-  "cache/list_tasks__current_true__completed_true__project_all__unit_all.json";
+const ontrackProjectFile = (projectId: number) => `cache/project_details_${projectId}.json`;
 
 const make = Effect.gen(function* () {
   const tools = yield* CampusTools.CampusTools;
@@ -264,17 +264,34 @@ const make = Effect.gen(function* () {
    */
   const ontrackOverviewFromLaneFiles = Effect.gen(function* () {
     const units = decodeLaneCacheFile((yield* tools.readLaneFile(ONTRACK_UNITS_FILE)) ?? "");
-    const tasks = decodeLaneCacheFile((yield* tools.readLaneFile(ONTRACK_TASKS_FILE)) ?? "");
-    if (Option.isNone(units) || Option.isNone(tasks)) return null;
+    if (Option.isNone(units)) return null;
+    const projectIds = Array.isArray(units.value.payload)
+      ? units.value.payload.flatMap((unit) => {
+          const projectId = (unit as { projectId?: unknown }).projectId;
+          return typeof projectId === "number" ? [projectId] : [];
+        })
+      : [];
+    const projects: unknown[] = [];
+    let oldest = units.value.cachedAt;
+    for (const projectId of projectIds) {
+      const file = decodeLaneCacheFile(
+        (yield* tools.readLaneFile(ontrackProjectFile(projectId))) ?? "",
+      );
+      if (Option.isSome(file)) {
+        projects.push(file.value.payload);
+        if (file.value.cachedAt < oldest) oldest = file.value.cachedAt;
+      }
+    }
+    if (projects.length === 0) return null;
     const overview = normalizeOnTrackOverview({
       units: { units: units.value.payload },
-      tasks: { tasks: tasks.value.payload },
-      fetchedAt: tasks.value.cachedAt,
+      projects,
+      fetchedAt: oldest,
     });
     return {
       ...overview,
       meta: {
-        fetchedAt: tasks.value.cachedAt,
+        fetchedAt: oldest,
         stale: true,
         note: "The lane's last copy; a live read follows.",
         issue: null,
@@ -299,14 +316,23 @@ const make = Effect.gen(function* () {
             args: { currentOnly: true },
             refresh: input.refresh,
           });
-          const tasks = yield* laneCall({
-            app: "ontrack",
-            operation: "ontrackOverview",
-            tool: "list_tasks",
-            args: { currentOnly: true, includeCompleted: true },
-            refresh: input.refresh,
+          const projectIds = asArray(asRecord(units).units).flatMap((unit) => {
+            const projectId = asRecord(unit).projectId;
+            return typeof projectId === "number" ? [projectId] : [];
           });
-          return normalizeOnTrackOverview({ units, tasks, fetchedAt: (yield* stamp).iso });
+          const projects: unknown[] = [];
+          for (const projectId of projectIds) {
+            projects.push(
+              yield* laneCall({
+                app: "ontrack",
+                operation: "ontrackOverview",
+                tool: "get_project_details",
+                args: { projectId },
+                refresh: input.refresh,
+              }),
+            );
+          }
+          return normalizeOnTrackOverview({ units, projects, fetchedAt: (yield* stamp).iso });
         }),
       );
     });
@@ -340,16 +366,69 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * Outlook mail goes through the fork's own lane script: the harness's list
+   * parser predates the current Outlook web app and glues a row into one
+   * string, while the row structure still carries sender, subject and time.
+   */
+  const laneScript = (input: {
+    readonly app: CampusApp;
+    readonly operation: string;
+    readonly args: ReadonlyArray<string>;
+    readonly refresh?: boolean | undefined;
+  }) =>
+    Effect.gen(function* () {
+      const lane = laneOf(input.app);
+      const memo = signInMissing.get(lane);
+      const { ms: startedAt } = yield* stamp;
+      if (memo && input.refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
+        return yield* new CampusError({
+          app: input.app,
+          operation: input.operation,
+          reason: "sign_in_required",
+          detail: memo.detail,
+        });
+      }
+      if (input.refresh === true) signInMissing.delete(lane);
+      const online = yield* tools.ensureLane;
+      if (!online) {
+        return yield* new CampusError({
+          app: input.app,
+          operation: input.operation,
+          reason: "lane_offline",
+          detail: "The browser lane is not running and could not be started.",
+        });
+      }
+      const result = yield* tools.laneRun(lane, input.args).pipe(
+        Effect.mapError(
+          (error) =>
+            new CampusError({
+              app: input.app,
+              operation: input.operation,
+              reason: "lane_offline",
+              detail: error.detail || "The lane did not answer.",
+            }),
+        ),
+      );
+      if (result.ok) return result.payload;
+      const detail = result.detail ?? "The lane did not answer.";
+      const reason =
+        result.reason === "sign_in_required" ? "sign_in_required" : classifyLaneFailure(detail);
+      if (reason === "sign_in_required") {
+        signInMissing.set(lane, { at: (yield* stamp).ms, detail });
+      }
+      return yield* new CampusError({ app: input.app, operation: input.operation, reason, detail });
+    });
+
   const outlookInbox: CampusService["Service"]["outlookInbox"] = (input) =>
     keep(
       `outlook:inbox:${input.top ?? DEFAULT_LIST_TOP}`,
       input.refresh,
-      laneCall({
+      laneScript({
         app: "outlook",
         operation: "outlookInbox",
-        tool: "list_outlook_unread_emails_local",
+        args: ["inbox", String(input.top ?? DEFAULT_LIST_TOP)],
         refresh: input.refresh,
-        args: { top: input.top ?? DEFAULT_LIST_TOP, allowInteractiveRecovery: false },
       }).pipe(
         Effect.flatMap((raw) =>
           Effect.map(stamp, ({ iso }) => normalizeOutlookInbox({ raw, fetchedAt: iso })),
@@ -359,18 +438,13 @@ const make = Effect.gen(function* () {
 
   const outlookEmail: CampusService["Service"]["outlookEmail"] = (input) =>
     keep(
-      `outlook:email:${input.subject}`,
+      `outlook:email:${input.ref}`,
       input.refresh,
-      laneCall({
+      laneScript({
         app: "outlook",
         operation: "outlookEmail",
-        tool: "read_outlook_email_local",
+        args: ["mail", input.ref],
         refresh: input.refresh,
-        args: {
-          message: input.subject,
-          includeConversation: true,
-          allowInteractiveRecovery: false,
-        },
       }).pipe(
         Effect.flatMap((raw) =>
           Effect.map(stamp, ({ iso }) => normalizeOutlookEmail({ raw, fetchedAt: iso })),
@@ -460,13 +534,34 @@ const make = Effect.gen(function* () {
   const signIn: CampusService["Service"]["signIn"] = (input) =>
     Effect.gen(function* () {
       const lane = laneOf(input.app);
-      yield* laneCall({
-        app: input.app,
-        operation: "signIn",
-        tool: lane === "deakin" ? "login_in_browser" : "microsoft_login_in_browser",
-        args: {},
-        timeoutMs: SIGN_IN_TIMEOUT_MS,
-      });
+      const online = yield* tools.ensureLane;
+      if (!online) {
+        return yield* new CampusError({
+          app: input.app,
+          operation: "signIn",
+          reason: "lane_offline",
+          detail: "The browser lane is not running and could not be started.",
+        });
+      }
+      const login = yield* tools.laneRun(lane, ["login", lane]).pipe(
+        Effect.mapError(
+          (error) =>
+            new CampusError({
+              app: input.app,
+              operation: "signIn",
+              reason: "tool_failed",
+              detail: error.detail || "The sign-in could not be started.",
+            }),
+        ),
+      );
+      if (!login.ok) {
+        return yield* new CampusError({
+          app: input.app,
+          operation: "signIn",
+          reason: login.reason === "credentials_missing" ? "sign_in_required" : "tool_failed",
+          detail: login.detail ?? "The sign-in did not complete.",
+        });
+      }
       signInMissing.delete(lane);
       // A sign-in changes what every page of that lane may read.
       for (const key of kept.keys()) {

@@ -19,7 +19,7 @@ const LIST_TOP = 25;
 export function OutlookPage({ app }: { readonly app: PinnedApp }) {
   const environmentId = usePrimaryEnvironmentId();
   const [view, setView] = useState<OutlookView>("inbox");
-  const [openSubject, setOpenSubject] = useState<string | null>(null);
+  const [openRef, setOpenRef] = useState<{ ref: string; subject: string } | null>(null);
   const switcher = (
     <ToggleGroup
       aria-label="Outlook view"
@@ -28,7 +28,7 @@ export function OutlookPage({ app }: { readonly app: PinnedApp }) {
         const next = values[0];
         if (next === "inbox" || next === "calendar") {
           setView(next);
-          setOpenSubject(null);
+          setOpenRef(null);
         }
       }}
     >
@@ -36,23 +36,18 @@ export function OutlookPage({ app }: { readonly app: PinnedApp }) {
       <Toggle value="calendar">Calendar</Toggle>
     </ToggleGroup>
   );
-  if (view === "inbox" && openSubject !== null) {
+  if (view === "inbox" && openRef !== null) {
     return (
       <EmailView
         app={app}
         environmentId={environmentId}
-        subject={openSubject}
-        onBack={() => setOpenSubject(null)}
+        conversation={openRef}
+        onBack={() => setOpenRef(null)}
       />
     );
   }
   return view === "inbox" ? (
-    <InboxView
-      app={app}
-      environmentId={environmentId}
-      switcher={switcher}
-      onOpen={setOpenSubject}
-    />
+    <InboxView app={app} environmentId={environmentId} switcher={switcher} onOpen={setOpenRef} />
   ) : (
     <CalendarView app={app} environmentId={environmentId} switcher={switcher} />
   );
@@ -67,7 +62,7 @@ function InboxView({
   readonly app: PinnedApp;
   readonly environmentId: EnvironmentId | null;
   readonly switcher: React.ReactNode;
-  readonly onOpen: (subject: string) => void;
+  readonly onOpen: (conversation: { ref: string; subject: string }) => void;
 }) {
   const [force, setForce] = useState(false);
   const query = useEnvironmentQuery(
@@ -96,17 +91,20 @@ function InboxView({
         <div role="list" className="flex flex-col gap-0.5">
           {data.messages.map((message, index) => {
             const subject = message.subject ?? "(no subject)";
+            const open = () => {
+              if (message.ref) onOpen({ ref: message.ref, subject });
+            };
             return (
               <div key={message.ref ?? `${index}`} role="listitem">
                 <div
                   role="button"
                   tabIndex={0}
                   className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2.5 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => onOpen(subject)}
+                  onClick={open}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
-                    onOpen(subject);
+                    open();
                   }}
                 >
                   <span
@@ -151,20 +149,21 @@ function InboxView({
 function EmailView({
   app,
   environmentId,
-  subject,
+  conversation,
   onBack,
 }: {
   readonly app: PinnedApp;
   readonly environmentId: EnvironmentId | null;
-  readonly subject: string;
+  readonly conversation: { readonly ref: string; readonly subject: string };
   readonly onBack: () => void;
 }) {
+  const subject = conversation.subject;
   const [force, setForce] = useState(false);
   const query = useEnvironmentQuery(
     environmentId
       ? serverEnvironment.campusOutlookEmail({
           environmentId,
-          input: { subject, ...(force ? { refresh: true } : {}) },
+          input: { ref: conversation.ref, ...(force ? { refresh: true } : {}) },
         })
       : null,
   );

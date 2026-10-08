@@ -70,6 +70,9 @@ export const CampusStatusResult = Schema.Struct({
 });
 export type CampusStatusResult = typeof CampusStatusResult.Type;
 
+/** OnTrack grade tiers: 0 Pass, 1 Credit, 2 Distinction, 3 High Distinction. */
+export const OnTrackGrade = Schema.Number;
+
 export const OnTrackUnit = Schema.Struct({
   projectId: Schema.Number,
   unitCode: Schema.String,
@@ -78,6 +81,9 @@ export const OnTrackUnit = Schema.Struct({
   startDate: Text,
   endDate: Text,
   isCurrent: Schema.Boolean,
+  /** The grade the student is aiming for in this unit, when the unit's details were read. */
+  targetGrade: Schema.NullOr(OnTrackGrade),
+  submittedGrade: Schema.NullOr(OnTrackGrade),
 });
 export type OnTrackUnit = typeof OnTrackUnit.Type;
 
@@ -103,6 +109,9 @@ export const OnTrackTask = Schema.Struct({
   hasTaskSheet: Schema.Boolean,
   hasTaskResources: Schema.Boolean,
   uploadRequirements: Schema.Array(OnTrackUploadRequirement),
+  /** The grade tier this task counts toward, when the unit's details were read. */
+  targetGrade: Schema.NullOr(OnTrackGrade),
+  weighting: Schema.NullOr(Schema.Number),
 });
 export type OnTrackTask = typeof OnTrackTask.Type;
 
@@ -177,9 +186,9 @@ export const CampusOutlookInboxResult = Schema.Struct({
 });
 export type CampusOutlookInboxResult = typeof CampusOutlookInboxResult.Type;
 
-/** The inbox list carries no stable refs, so a message opens by its subject. */
+/** A conversation opens by the id its inbox row carries. */
 export const CampusOutlookEmailInput = Schema.Struct({
-  subject: Schema.String,
+  ref: Schema.String,
   refresh: Schema.optional(Schema.Boolean),
 });
 export type CampusOutlookEmailInput = typeof CampusOutlookEmailInput.Type;
