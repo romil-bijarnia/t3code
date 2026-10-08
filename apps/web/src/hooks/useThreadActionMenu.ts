@@ -212,6 +212,16 @@ export function useThreadActionMenu(input: {
             });
             return;
           }
+          case "add-scheduled-task":
+            void router.navigate({
+              to: "/settings/scheduled-tasks",
+              search: {
+                environmentId: threadRef.environmentId,
+                projectId: thread.projectId,
+                create: true,
+              },
+            });
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.

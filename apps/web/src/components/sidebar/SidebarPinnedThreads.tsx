@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useRouter } from "@tanstack/react-router";
+import { EllipsisIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";
 
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
@@ -16,6 +17,7 @@ import type { SidebarThreadSummary } from "../../types";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveThreadLastVisitedAt, resolveThreadStatusPill } from "../Sidebar.logic";
 import { ThreadStatusLabel } from "../ThreadStatusIndicators";
+import { Button } from "../ui/button";
 import {
   SidebarGroup,
   SidebarMenu,
@@ -163,8 +165,23 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
         }}
       >
         {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
-        <span>{thread.title}</span>
+        <span className="pr-6">{thread.title}</span>
       </SidebarMenuButton>
+      <span className="absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/menu-item:opacity-100 focus-within:opacity-100">
+        <Button
+          size="icon-xs"
+          variant="ghost-muted"
+          aria-label="Chat actions"
+          aria-haspopup="menu"
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            openMenu({ x: rect.left, y: rect.bottom + 4 });
+          }}
+        >
+          <EllipsisIcon />
+        </Button>
+      </span>
     </SidebarMenuItem>
   );
 });

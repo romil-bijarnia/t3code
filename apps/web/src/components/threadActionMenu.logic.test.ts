@@ -52,22 +52,22 @@ describe("buildThreadActionMenuItems", () => {
       });
       const expected = reversed
         ? [
-            "unpin",
-            "unsettle",
-            "unsnooze",
             "rename",
             "regenerate-title",
             "auto-settle",
+            "unpin",
+            "unsettle",
+            "unsnooze",
             "archive",
             "delete",
           ]
         : [
-            "pin",
-            "settle",
-            "snooze",
             "rename",
             "regenerate-title",
             "auto-settle",
+            "pin",
+            "settle",
+            "snooze",
             "archive",
             "delete",
           ];
@@ -82,9 +82,12 @@ describe("buildThreadActionMenuItems", () => {
   it("preserves local actions and restores mutations after a grant", () => {
     const denied = buildThreadActionMenuItems({ ...baseState, canOperate: false, branch: "main" });
     expect(denied.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
-      "new-thread-on-branch",
+      "copy-path",
+      "copy-branch",
+      "copy-thread-id",
       "mark-unread",
-      "copy",
+      "new-thread-on-branch",
+      "add-scheduled-task",
       "project-settings",
     ]);
     const allowed = buildThreadActionMenuItems({ ...baseState, canOperate: true });
@@ -103,18 +106,54 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "copy-path",
+      "copy-thread-id",
+      "rename",
+      "mark-unread",
+      "add-scheduled-task",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
-  it("groups project settings with utility actions before archive", () => {
+  it("leads with the flat copy actions, as the Codex chat menu does", () => {
+    expect(ids({ ...baseState, branch: "main" }).slice(0, 3)).toEqual([
+      "copy-path",
+      "copy-branch",
+      "copy-thread-id",
+    ]);
+    expect(buildThreadActionMenuItems(baseState)[0]).toMatchObject({
+      label: "Copy working directory",
+      icon: "folder",
+    });
+  });
+
+  it("groups the scheduled task entry with project settings before archive", () => {
     const items = buildThreadActionMenuItems(baseState);
-    const copyIndex = items.findIndex((item) => item.id === "copy");
-    expect(items[copyIndex + 1]).toMatchObject({
+    const taskIndex = items.findIndex((item) => item.id === "add-scheduled-task");
+    expect(items[taskIndex]).toMatchObject({
+      label: "Add scheduled task…",
+      icon: "clock",
+      separatorBefore: true,
+    });
+    expect(items[taskIndex + 1]).toMatchObject({
       id: "project-settings",
       label: "Project settings",
       icon: "settings",
     });
-    expect(items[copyIndex + 2]?.id).toBe("archive");
+    expect(items[taskIndex + 2]?.id).toBe("archive");
+  });
+
+  it("opens the lifecycle group with a separator on its first supported item", () => {
+    const withPin = buildThreadActionMenuItems(baseState);
+    expect(withPin.find((item) => item.id === "pin")?.separatorBefore).toBe(true);
+    const withoutPin = buildThreadActionMenuItems({
+      ...baseState,
+      supports: { ...baseState.supports, pinning: false },
+    });
+    expect(withoutPin.find((item) => item.id === "settle")?.separatorBefore).toBe(true);
   });
 
   it("offers project filtering only for surfaces with a scoped thread list", () => {

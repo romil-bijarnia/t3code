@@ -378,6 +378,8 @@ function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
+  readonly projectId?: ProjectId | undefined;
+  readonly create?: true | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
@@ -394,6 +396,18 @@ export function ScheduledTasksSettings(target: {
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
   );
+  // Arriving from a chat's "Add scheduled task…" opens the form once, seeded
+  // with that chat's project.
+  const createHandled = useRef(false);
+  useEffect(() => {
+    if (!target.create || createHandled.current || !defaultEnvironment) return;
+    createHandled.current = true;
+    setEditor({
+      environmentId: target.environmentId ?? defaultEnvironment.environmentId,
+      task: null,
+      ...(target.projectId ? { seed: { projectId: target.projectId } } : {}),
+    });
+  }, [defaultEnvironment, target.create, target.environmentId, target.projectId]);
   return (
     <SettingsPageContainer>
       <section className="space-y-5">
