@@ -200,7 +200,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        assert.deepEqual(appendSwitchMock.mock.calls, [["use-mock-keychain"]]);
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );

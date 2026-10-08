@@ -115,6 +115,14 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    if (platform === "darwin") {
+      // This fork signs itself with a local certificate, so macOS treats every
+      // build as a new app and asks for the login keychain password whenever
+      // Chromium opens "t3code Safe Storage". The mock keychain encrypts the
+      // connection catalog with a fixed key instead and never asks.
+      Electron.app.commandLine.appendSwitch("use-mock-keychain");
+    }
+
     return { linux, linuxPasswordStoreCommandLine };
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
