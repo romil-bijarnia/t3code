@@ -206,6 +206,7 @@ import {
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarPinnedThreads } from "./sidebar/SidebarPinnedThreads";
+import { SidebarRecentChats } from "./sidebar/SidebarRecentChats";
 import { SidebarSpaces } from "./sidebar/SidebarSpaces";
 import { isInsideSpacesFolder } from "../spaces/spaces";
 import { SidebarPrimaryNav } from "./sidebar/SidebarPrimaryNav";
@@ -3216,6 +3217,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
         )}
       </SidebarGroup>
+      <SidebarRecentChats activeThreadKey={routeThreadKey} />
     </SidebarContent>
   );
 });

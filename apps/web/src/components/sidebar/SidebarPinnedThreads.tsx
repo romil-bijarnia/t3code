@@ -58,7 +58,7 @@ export const SidebarPinnedThreads = memo(function SidebarPinnedThreads({
               candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
           );
           return (
-            <SidebarPinnedThreadRow
+            <SidebarThreadRow
               key={threadKey}
               thread={thread}
               isActive={activeThreadKey === threadKey}
@@ -71,7 +71,8 @@ export const SidebarPinnedThreads = memo(function SidebarPinnedThreads({
   );
 });
 
-const SidebarPinnedThreadRow = memo(function SidebarPinnedThreadRow({
+/** One thread row outside the project tree; the pinned list and the flat Chats list share it. */
+export const SidebarThreadRow = memo(function SidebarThreadRow({
   thread,
   isActive,
   projectCwd,
