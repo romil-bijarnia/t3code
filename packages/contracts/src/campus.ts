@@ -142,6 +142,7 @@ export type OnTrackComment = typeof OnTrackComment.Type;
 export const CampusOnTrackTaskInput = Schema.Struct({
   projectId: Schema.Number,
   taskId: Schema.Number,
+  taskDefinitionId: Schema.Number,
   taskAbbreviation: Schema.String,
   refresh: Schema.optional(Schema.Boolean),
 });

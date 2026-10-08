@@ -49,6 +49,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as CampusService from "../campus/CampusService.ts";
 import * as CampusTools from "../campus/CampusTools.ts";
+import * as OnTrackApi from "../campus/OnTrackApi.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
@@ -335,7 +336,11 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
-  CampusService.layer.pipe(Layer.provide(CampusTools.layer)),
+  CampusService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(CampusTools.layer, OnTrackApi.layer.pipe(Layer.provide(CampusTools.layer))),
+    ),
+  ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),

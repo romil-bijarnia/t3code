@@ -2,8 +2,11 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   classifyLaneFailure,
+  currentProjects,
   deakinSignIn,
   microsoftSignIn,
+  normalizeOnTrackApiOverview,
+  normalizeOnTrackApiTask,
   normalizeOnTrackOverview,
   normalizeOnTrackTaskDetails,
   normalizeTeamsThreads,
@@ -170,5 +173,198 @@ describe("Teams", () => {
     assert.equal(result.threads[0]?.title, "SIT313");
     assert.equal(result.threads[1]?.title, null);
     assert.equal(result.nextCursor, "msc1.eyJvZmZzZXQiOjV9");
+  });
+});
+
+describe("OnTrack API", () => {
+  const unit = {
+    id: 1012,
+    code: "SIT314",
+    name: "Software Architecture",
+    teaching_period_id: 47,
+    task_definitions: [
+      {
+        id: 21406,
+        abbreviation: "6.4HD",
+        name: "Applying the State of the Art",
+        description: "Report",
+        weighting: 5,
+        target_grade: 3,
+        target_date: "2026-09-27",
+        due_date: "2026-10-04",
+        start_date: "2026-09-21",
+        has_task_sheet: true,
+        upload_requirements: [{ key: "file0", name: "report", type: "document" }],
+      },
+    ],
+  };
+  const project = {
+    id: 178583,
+    unit_id: 1012,
+    target_grade: 3,
+    submitted_grade: 3,
+    unit: { id: 1012, code: "SIT314", teaching_period_id: 47, active: true },
+    tasks: [
+      {
+        id: 2074581,
+        task_definition_id: 21406,
+        status: "ready_for_feedback",
+        due_date: "2026-10-04",
+        submission_date: "2026-10-04",
+        extensions: 1,
+        times_assessed: 0,
+        num_new_comments: 2,
+      },
+      { id: 999, task_definition_id: 404, status: "not_started" },
+    ],
+  };
+  const periods = [
+    {
+      id: 47,
+      period: "T2",
+      year: 2026,
+      start_date: "2026-07-06T00:00:00.000Z",
+      end_date: "2026-10-16T00:00:00.000Z",
+      active: true,
+    },
+  ];
+  const fetchedAt = "2026-10-09T00:00:00.000Z";
+
+  it("joins projects with their unit's task definitions and the period", () => {
+    const overview = normalizeOnTrackApiOverview({
+      projects: [{ project, unit }],
+      periods,
+      fetchedAt,
+    });
+    assert.deepEqual(overview.units, [
+      {
+        projectId: 178583,
+        unitCode: "SIT314",
+        unitName: "Software Architecture",
+        teachingPeriod: "T2 2026",
+        startDate: "2026-07-06T00:00:00.000Z",
+        endDate: "2026-10-16T00:00:00.000Z",
+        isCurrent: true,
+        targetGrade: 3,
+        submittedGrade: 3,
+      },
+    ]);
+    assert.equal(overview.tasks.length, 2);
+    const task = overview.tasks[0];
+    assert.equal(task?.taskAbbreviation, "6.4HD");
+    assert.equal(task?.taskName, "Applying the State of the Art");
+    assert.equal(task?.targetGrade, 3);
+    assert.equal(task?.weighting, 5);
+    assert.equal(task?.newComments, 2);
+    assert.equal(task?.uploadRequirements[0]?.name, "report");
+    // A task whose definition is unknown keeps its row with empty names.
+    assert.equal(overview.tasks[1]?.taskName, "");
+    assert.equal(overview.meta.stale, false);
+  });
+
+  it("shapes a task's comments and submission", () => {
+    const overview = normalizeOnTrackApiOverview({
+      projects: [{ project, unit }],
+      periods,
+      fetchedAt,
+    });
+    const details = normalizeOnTrackApiTask({
+      task: overview.tasks[0]!,
+      definition: unit.task_definitions[0],
+      comments: [
+        {
+          id: 10388802,
+          comment: "Ready to Mark",
+          type: "status",
+          is_new: false,
+          author: { first_name: "Romil", last_name: "Bijarnia" },
+          created_at: "2026-10-04T05:26:04.000Z",
+          status: "ready_for_feedback",
+        },
+        { comment: "no id" },
+      ],
+      submission: {
+        has_pdf: true,
+        submission_date: "2026-10-04T04:44:32.000Z",
+        task_status: "ready_for_feedback",
+      },
+      fetchedAt,
+    });
+    assert.equal(details.description, "Report");
+    assert.deepEqual(
+      details.comments.map((comment) => [comment.author, comment.text, comment.status]),
+      [["Romil Bijarnia", "Ready to Mark", "ready_for_feedback"]],
+    );
+    assert.equal(details.submission?.hasPdf, true);
+    assert.equal(details.taskPagePath, "/projects/178583/dashboard/6.4HD");
+  });
+});
+
+describe("currentProjects", () => {
+  const periods = [
+    {
+      id: 18,
+      period: "T2",
+      year: 2022,
+      start_date: "2022-07-11T00:00:00.000Z",
+      end_date: "2022-10-21T00:00:00.000Z",
+      active_until: "2022-11-04T00:00:00.000Z",
+      active: false,
+    },
+    {
+      id: 47,
+      period: "T2",
+      year: 2026,
+      start_date: "2026-07-06T00:00:00.000Z",
+      end_date: "2026-10-16T00:00:00.000Z",
+      active_until: "2026-10-30T00:00:00.000Z",
+      active: true,
+    },
+    {
+      id: 48,
+      period: "T3",
+      year: 2026,
+      start_date: "2026-11-02T00:00:00.000Z",
+      end_date: "2027-02-12T00:00:00.000Z",
+      active_until: "2027-03-01T00:00:00.000Z",
+      active: true,
+    },
+  ];
+  const unit = (id: number, code: string, period: number, start: string, end: string) => ({
+    id: id * 10,
+    unit_id: id,
+    unit: { id, code, teaching_period_id: period, start_date: start, end_date: end, active: true },
+  });
+  const list = [
+    unit(1, "SIT192", 18, "2022-07-11", "2022-10-21"),
+    unit(2, "SIT313", 47, "2026-07-06", "2026-10-16"),
+    unit(3, "SIT314", 47, "2026-07-06", "2026-10-16"),
+    unit(4, "SIT374", 48, "2026-11-02", "2027-02-12"),
+  ];
+  const at = (iso: string) => Date.parse(iso);
+
+  it("keeps the units whose dates cover today, not every unit OnTrack still flags active", () => {
+    assert.deepEqual(
+      currentProjects(list, periods, at("2026-10-09T00:00:00Z")).map((entry) => entry.unitId),
+      [2, 3],
+    );
+  });
+
+  it("counts marking weeks through the period's active_until", () => {
+    assert.deepEqual(
+      currentProjects(list, periods, at("2026-10-25T00:00:00Z")).map((entry) => entry.unitId),
+      [2, 3],
+    );
+  });
+
+  it("falls back to the most recently finished units between trimesters", () => {
+    assert.deepEqual(
+      currentProjects(list, periods, at("2026-11-01T12:00:00Z")).map((entry) => entry.unitId),
+      [2, 3],
+    );
+    assert.deepEqual(
+      currentProjects(list, periods, at("2026-11-03T00:00:00Z")).map((entry) => entry.unitId),
+      [4],
+    );
   });
 });

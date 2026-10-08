@@ -10,11 +10,11 @@
  * - `inbox <top>` lists the Outlook inbox from the row structure of the
  *   current Outlook web app, which the harness's older parser no longer reads.
  * - `mail <conversationId>` opens one conversation and reads its messages.
+ * - `ontrack-token` mints an OnTrack API token from the signed-in session,
+ *   signing in first when the session has lapsed.
  *
  * Every command prints one JSON line on stdout and exits non-zero on failure.
  */
-export const LANE_SCRIPT_FILENAME = "t3-lane.mjs";
-
 export const LANE_SCRIPT_SOURCE = String.raw`
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
@@ -307,6 +307,36 @@ async function deakinLogin(credentials) {
   }
 }
 
+/** An OnTrack API token from the signed-in session, signing in first if it lapsed. */
+async function ontrackToken() {
+  const ontrack = await import(pathToFileURL(HARNESS + "/scripts/lib/ontrack.js").href);
+  const session = await ontrack.launchContext({ headless: true, useSavedState: true });
+  const page = await pageOf(session);
+  try {
+    await page.goto(ontrack.HOME_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
+    const settled = Date.now() + 15_000;
+    while (Date.now() < settled && !(await ontrack.isAuthenticated(page).catch(() => false))) {
+      await sleep(STEP_MS);
+    }
+    if (!(await ontrack.isAuthenticated(page).catch(() => false))) {
+      const credentials = await readCredentials();
+      await page.goto(ontrack.SIGN_IN_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
+      const result = await drive(page, () => ontrack.isAuthenticated(page), {
+        ...credentials,
+        kickOff: () => ontrack.kickOffLoginIfNeeded(page),
+      });
+      if (!result.ok) {
+        fail(result.reason === "timeout" ? "sign_in_required" : result.reason, "OnTrack: " + result.detail);
+      }
+      await ontrack.saveAuthState(session.context).catch(() => {});
+    }
+    const auth = await ontrack.getApiAuth(page);
+    emit({ ok: true, authToken: auth.authToken, username: auth.user?.username ?? account });
+  } finally {
+    await ontrack.closeAll(session).catch(() => {});
+  }
+}
+
 /** The signed-in Outlook mail page, or a sign-in failure the pages understand. */
 async function openMail(lib, page) {
   await page.goto(lib.MICROSOFT_SERVICES.mail.homeUrl, { waitUntil: "domcontentloaded" }).catch(() => {});
@@ -420,6 +450,8 @@ if (command === "login") {
   const credentials = await readCredentials();
   if (argument === "deakin") await deakinLogin(credentials);
   else await microsoftLogin(credentials);
+} else if (command === "ontrack-token") {
+  await ontrackToken();
 } else if (command === "inbox") {
   await inbox(Number(argument) || 20);
 } else if (command === "mail") {

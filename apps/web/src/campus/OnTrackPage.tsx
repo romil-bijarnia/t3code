@@ -532,6 +532,7 @@ function TaskDetail({
           input: {
             projectId: task.projectId,
             taskId: task.taskId,
+            taskDefinitionId: task.taskDefinitionId,
             taskAbbreviation: task.taskAbbreviation,
           },
         })

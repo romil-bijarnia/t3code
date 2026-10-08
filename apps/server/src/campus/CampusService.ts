@@ -30,20 +30,24 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as CampusTools from "./CampusTools.ts";
+import * as OnTrackApi from "./OnTrackApi.ts";
 import {
   asArray,
   asRecord,
   classifyLaneFailure,
+  currentProjects,
   deakinSignIn,
   microsoftSignIn,
+  normalizeOnTrackApiOverview,
+  normalizeOnTrackApiTask,
   normalizeOnTrackOverview,
-  normalizeOnTrackTaskDetails,
   normalizeOutlookCalendar,
   normalizeOutlookEmail,
   normalizeOutlookInbox,
   normalizePortalPage,
   normalizeTeamsThread,
   normalizeTeamsThreads,
+  num,
 } from "./normalize.ts";
 
 /**
@@ -105,6 +109,7 @@ const ontrackProjectFile = (projectId: number) => `cache/project_details_${proje
 
 const make = Effect.gen(function* () {
   const tools = yield* CampusTools.CampusTools;
+  const ontrackApi = yield* OnTrackApi.OnTrackApi;
   const kept = new Map<string, { readonly value: unknown; readonly at: number }>();
   // A lane that just said "sign in first" takes tens of seconds to say it again,
   // so every page of that lane fails fast on the memo until a refresh or sign-in.
@@ -299,6 +304,28 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /** OnTrack API calls remember a lane refusal like any other lane read. */
+  const ontrackGet = (path: string, refresh: boolean | undefined) =>
+    Effect.gen(function* () {
+      const memo = signInMissing.get("deakin");
+      const { ms: startedAt } = yield* stamp;
+      if (memo && refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
+        return yield* new CampusError({
+          app: "ontrack",
+          operation: path,
+          reason: "sign_in_required",
+          detail: memo.detail,
+        });
+      }
+      if (refresh === true) signInMissing.delete("deakin");
+      const result = yield* Effect.result(ontrackApi.get(path));
+      if (Result.isSuccess(result)) return result.success;
+      if (result.failure.reason === "sign_in_required") {
+        signInMissing.set("deakin", { at: (yield* stamp).ms, detail: result.failure.detail });
+      }
+      return yield* result.failure;
+    });
+
   const ontrackOverview: CampusService["Service"]["ontrackOverview"] = (input) =>
     Effect.gen(function* () {
       if (input.refresh !== true && !kept.has("ontrack:overview")) {
@@ -309,30 +336,31 @@ const make = Effect.gen(function* () {
         "ontrack:overview",
         input.refresh,
         Effect.gen(function* () {
-          const units = yield* laneCall({
-            app: "ontrack",
-            operation: "ontrackOverview",
-            tool: "list_units",
-            args: { currentOnly: true },
-            refresh: input.refresh,
+          const [projects, periods] = yield* Effect.all(
+            [
+              ontrackGet("/api/projects/?include_in_active=false", input.refresh),
+              ontrackGet("/api/teaching_periods/", input.refresh),
+            ],
+            { concurrency: 2 },
+          );
+          const current = currentProjects(projects, periods, (yield* stamp).ms);
+          const detailed = yield* Effect.forEach(
+            current,
+            ({ projectId, unitId }) =>
+              Effect.all(
+                [
+                  ontrackGet(`/api/projects/${projectId}`, input.refresh),
+                  ontrackGet(`/api/units/${unitId}`, input.refresh),
+                ],
+                { concurrency: 2 },
+              ).pipe(Effect.map(([project, unit]) => ({ project, unit }))),
+            { concurrency: 3 },
+          );
+          return normalizeOnTrackApiOverview({
+            projects: detailed,
+            periods,
+            fetchedAt: (yield* stamp).iso,
           });
-          const projectIds = asArray(asRecord(units).units).flatMap((unit) => {
-            const projectId = asRecord(unit).projectId;
-            return typeof projectId === "number" ? [projectId] : [];
-          });
-          const projects: unknown[] = [];
-          for (const projectId of projectIds) {
-            projects.push(
-              yield* laneCall({
-                app: "ontrack",
-                operation: "ontrackOverview",
-                tool: "get_project_details",
-                args: { projectId },
-                refresh: input.refresh,
-              }),
-            );
-          }
-          return normalizeOnTrackOverview({ units, projects, fetchedAt: (yield* stamp).iso });
         }),
       );
     });
@@ -342,27 +370,50 @@ const make = Effect.gen(function* () {
       `ontrack:task:${input.projectId}:${input.taskId}`,
       input.refresh,
       Effect.gen(function* () {
-        const raw = yield* laneCall({
-          app: "ontrack",
-          operation: "ontrackTask",
-          tool: "get_ontrack_task_details",
-          refresh: input.refresh,
-          args: {
-            projectId: input.projectId,
-            taskId: input.taskId,
-            taskAbbreviation: input.taskAbbreviation,
-          },
+        const project = asRecord(
+          yield* ontrackGet(`/api/projects/${input.projectId}`, input.refresh),
+        );
+        const unitId = num(asRecord(project.unit).id, num(project.unit_id, -1));
+        const [unit, comments, submission] = yield* Effect.all(
+          [
+            ontrackGet(`/api/units/${unitId}`, input.refresh),
+            ontrackGet(
+              `/api/projects/${input.projectId}/task_def_id/${input.taskDefinitionId}/comments/`,
+              input.refresh,
+            ),
+            ontrackGet(
+              `/api/projects/${input.projectId}/task_def_id/${input.taskDefinitionId}/submission_details`,
+              input.refresh,
+            ).pipe(Effect.orElseSucceed(() => null)),
+          ],
+          { concurrency: 3 },
+        );
+        const definition =
+          asArray(asRecord(unit).task_definitions).find(
+            (entry) => asRecord(entry).id === input.taskDefinitionId,
+          ) ?? {};
+        const row = asArray(project.tasks).find((entry) => asRecord(entry).id === input.taskId);
+        const overview = normalizeOnTrackApiOverview({
+          projects: [{ project: { ...project, tasks: row ? [row] : [] }, unit }],
+          periods: [],
+          fetchedAt: (yield* stamp).iso,
         });
-        const details = normalizeOnTrackTaskDetails({ raw, fetchedAt: (yield* stamp).iso });
-        if (!details) {
+        const task = overview.tasks[0];
+        if (!task) {
           return yield* new CampusError({
             app: "ontrack",
             operation: "ontrackTask",
             reason: "tool_failed",
-            detail: "OnTrack returned no task for that id.",
+            detail: "OnTrack has no such task in that unit.",
           });
         }
-        return details;
+        return normalizeOnTrackApiTask({
+          task,
+          definition,
+          comments,
+          submission,
+          fetchedAt: (yield* stamp).iso,
+        });
       }),
     );
 

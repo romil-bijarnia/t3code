@@ -1,9 +1,13 @@
 import { assert, it } from "@effect/vitest";
+import { CampusError } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CampusService from "./CampusService.ts";
 import * as CampusTools from "./CampusTools.ts";
+import * as OnTrackApi from "./OnTrackApi.ts";
 
 type Handler = (
   tool: string,
@@ -14,12 +18,42 @@ const layerWithLane = (handler: Handler, online = true) =>
   CampusService.layer.pipe(
     Layer.provide(
       Layer.succeed(
+        OnTrackApi.OnTrackApi,
+        OnTrackApi.OnTrackApi.of({
+          get: (path) =>
+            (online
+              ? handler(`api:${path}`, {})
+              : Effect.fail(
+                  new CampusTools.CampusToolError({
+                    lane: "deakin",
+                    tool: "ontrack-token",
+                    category: "unavailable",
+                    detail: "The browser lane is not running and could not be started.",
+                  }),
+                )
+            ).pipe(
+              Effect.mapError(
+                (error) =>
+                  new CampusError({
+                    app: "ontrack",
+                    operation: path,
+                    reason: error.category === "unavailable" ? "lane_offline" : "sign_in_required",
+                    detail: error.detail,
+                  }),
+              ),
+            ),
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.succeed(
         CampusTools.CampusTools,
         CampusTools.CampusTools.of({
           call: ({ tool, args }) => handler(tool, args),
           laneOnline: Effect.succeed(online),
           ensureLane: Effect.succeed(online),
           readLaneFile: () => Effect.succeed(null),
+          writeLaneFile: () => Effect.void,
           laneRun: (_lane, args) =>
             handler(`lane:${args[0] ?? ""}`, {}).pipe(
               Effect.map((payload) => ({
@@ -42,15 +76,73 @@ const layerWithLane = (handler: Handler, online = true) =>
     ),
   );
 
-const unit = { projectId: 1, unitCode: "SIT313", unitName: "Full Stack", isCurrent: true };
-const task = {
-  projectId: 1,
-  taskId: 10,
-  taskDefinitionId: 100,
-  unitCode: "SIT313",
-  taskAbbreviation: "P1",
-  taskName: "Personal Website",
-  status: "complete",
+// OnTrack's API answers, keyed the way the fake OnTrackApi asks for them.
+const apiAnswers: Record<string, unknown> = {
+  "api:/api/projects/?include_in_active=false": [
+    {
+      id: 1,
+      unit_id: 7,
+      target_grade: 3,
+      unit: {
+        id: 7,
+        code: "SIT313",
+        teaching_period_id: 47,
+        start_date: "2026-07-06",
+        end_date: "2026-10-16",
+        active: true,
+      },
+    },
+    // OnTrack leaves `active` on for years; the dates say this one is long over.
+    {
+      id: 2,
+      unit_id: 8,
+      target_grade: 0,
+      unit: {
+        id: 8,
+        code: "OLD101",
+        teaching_period_id: 18,
+        start_date: "2022-07-11",
+        end_date: "2022-10-21",
+        active: true,
+      },
+    },
+  ],
+  "api:/api/teaching_periods/": [
+    {
+      id: 18,
+      period: "T2",
+      year: 2022,
+      start_date: "2022-07-11T00:00:00.000Z",
+      end_date: "2022-10-21T00:00:00.000Z",
+      active_until: "2022-11-04T00:00:00.000Z",
+      active: false,
+    },
+    {
+      id: 47,
+      period: "T2",
+      year: 2026,
+      start_date: "2026-07-06T00:00:00.000Z",
+      end_date: "2026-10-16T00:00:00.000Z",
+      active_until: "2026-10-30T00:00:00.000Z",
+      active: true,
+    },
+  ],
+  "api:/api/projects/1": {
+    id: 1,
+    unit_id: 7,
+    target_grade: 3,
+    unit: { id: 7, code: "SIT313", name: "Full Stack", teaching_period_id: 47, active: true },
+    tasks: [{ id: 10, task_definition_id: 100, status: "complete", due_date: "2026-07-17" }],
+  },
+  "api:/api/units/7": {
+    id: 7,
+    code: "SIT313",
+    name: "Full Stack",
+    teaching_period_id: 47,
+    task_definitions: [
+      { id: 100, abbreviation: "P1", name: "Personal Website", target_grade: 0, weighting: 5 },
+    ],
+  },
 };
 
 const laneFailure = (tool: string, detail: string) =>
@@ -60,27 +152,32 @@ const laneFailure = (tool: string, detail: string) =>
 let reads = 0;
 let inboxSignedOut = false;
 
-it.effect("serves the kept overview until a refresh is asked for", () =>
+it.effect("reads the overview from OnTrack's API and keeps it until a refresh", () =>
   Effect.gen(function* () {
     reads = 0;
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T00:00:00Z")));
     const campus = yield* CampusService.CampusService;
     const first = yield* campus.ontrackOverview({});
     const second = yield* campus.ontrackOverview({});
-    assert.equal(reads, 2);
-    assert.deepEqual(second, first);
-    assert.equal(first.units[0]?.unitCode, "SIT313");
-    assert.equal(first.tasks[0]?.taskName, "Personal Website");
-    yield* campus.ontrackOverview({ refresh: true });
+    // The project list, the periods, then the one current project and its unit.
     assert.equal(reads, 4);
+    assert.deepEqual(second, first);
+    assert.deepEqual(
+      first.units.map((unit) => [unit.unitCode, unit.teachingPeriod, unit.targetGrade]),
+      [["SIT313", "T2 2026", 3]],
+    );
+    assert.equal(first.tasks[0]?.taskName, "Personal Website");
+    assert.equal(first.tasks[0]?.targetGrade, 0);
+    assert.equal(first.tasks[0]?.weighting, 5);
+    yield* campus.ontrackOverview({ refresh: true });
+    assert.equal(reads, 8);
   }).pipe(
     Effect.provide(
       layerWithLane((tool) => {
         reads += 1;
-        return Effect.succeed(
-          tool === "list_units"
-            ? { units: [unit] }
-            : { project: { projectId: 1, targetGrade: 2 }, tasks: [task] },
-        );
+        return tool in apiAnswers
+          ? Effect.succeed(apiAnswers[tool])
+          : Effect.fail(laneFailure(tool, `unexpected ${tool}`));
       }),
     ),
   ),

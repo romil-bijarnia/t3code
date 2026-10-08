@@ -17,6 +17,8 @@ import {
   TeamsMessage,
   TeamsThread,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 /**
  * Pure shaping of what the browser lane's tools return into the campus
@@ -34,11 +36,16 @@ const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 const str = (value: unknown, fallback = ""): string =>
   typeof value === "string" ? value : fallback;
-const num = (value: unknown, fallback = 0): number =>
+export const num = (value: unknown, fallback = 0): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const numOrNull = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
-const bool = (value: unknown): boolean => value === true;
+export const bool = (value: unknown): boolean => value === true;
+/** Milliseconds for an ISO date or date-time string, or null when it is not one. */
+const epochOf = (value: unknown): number | null =>
+  typeof value === "string"
+    ? Option.getOrNull(Option.map(DateTime.make(value), DateTime.toEpochMillis))
+    : null;
 
 export function meta(input: {
   readonly fetchedAt: string;
@@ -381,5 +388,202 @@ export function microsoftSignIn(input: { readonly ok: boolean; readonly message:
   return {
     teams: !parts.has("teams"),
     outlook: !parts.has("mail") && !parts.has("calendar"),
+  };
+}
+
+/** A task row of OnTrack's API joined with its unit's task definition. */
+function normalizeApiTask(input: {
+  readonly task: Raw;
+  readonly definition: Raw;
+  readonly projectId: number;
+  readonly unitCode: string;
+}): OnTrackTask | null {
+  const { task, definition } = input;
+  if (typeof task.id !== "number") return null;
+  return {
+    projectId: input.projectId,
+    taskId: task.id,
+    taskDefinitionId: num(task.task_definition_id, num(definition.id)),
+    unitCode: input.unitCode,
+    taskAbbreviation: str(definition.abbreviation).trim(),
+    taskName: str(definition.name, str(definition.abbreviation)).trim(),
+    status: str(task.status, "not_started"),
+    dueDate: text(task.due_date) ?? text(definition.due_date),
+    targetDate: text(definition.target_date),
+    startDate: text(definition.start_date),
+    submissionDate: text(task.submission_date),
+    completionDate: text(task.completion_date),
+    extensions: num(task.extensions),
+    timesAssessed: num(task.times_assessed),
+    newComments: num(task.num_new_comments),
+    hasTaskSheet: bool(definition.has_task_sheet),
+    hasTaskResources: bool(definition.has_task_resources),
+    uploadRequirements: asArray(definition.upload_requirements).flatMap((entry) => {
+      const requirement = asRecord(entry);
+      return typeof requirement.name === "string"
+        ? [{ name: requirement.name, type: str(requirement.type, "document") }]
+        : [];
+    }),
+    targetGrade: numOrNull(definition.target_grade),
+    weighting: numOrNull(definition.weighting),
+  };
+}
+
+const DAY_MS = 86_400_000;
+
+const periodsById = (periods: unknown) =>
+  new Map(
+    asArray(periods).flatMap((entry) => {
+      const period = asRecord(entry);
+      return typeof period.id === "number" ? [[period.id, period] as const] : [];
+    }),
+  );
+
+interface TrimesterWindow {
+  readonly start: number | null;
+  /** The last day marking still counts: the period's `active_until` when it has one. */
+  readonly end: number | null;
+}
+
+/** When a unit runs, from its own dates with the teaching period filling gaps. */
+const trimesterWindow = (unit: Raw, period: Raw | undefined): TrimesterWindow => ({
+  start: epochOf(unit.start_date) ?? epochOf(period?.start_date),
+  end: epochOf(period?.active_until) ?? epochOf(unit.end_date) ?? epochOf(period?.end_date),
+});
+
+const withinTrimester = ({ start, end }: TrimesterWindow, nowMs: number): boolean =>
+  start !== null && end !== null && start <= nowMs && nowMs <= end + DAY_MS;
+
+/**
+ * Which of the person's projects belong to the trimester under way. OnTrack's
+ * `active` flag stays on for years, so the unit's dates decide, extended by the
+ * period's `active_until` so marking weeks still count. Between trimesters the
+ * most recently finished units stand in, so the dashboard never goes blank.
+ */
+export function currentProjects(
+  list: unknown,
+  periods: unknown,
+  nowMs: number,
+): Array<{ readonly projectId: number; readonly unitId: number }> {
+  const byId = periodsById(periods);
+  const candidates = asArray(list).flatMap((entry) => {
+    const project = asRecord(entry);
+    const unit = asRecord(project.unit);
+    if (typeof project.id !== "number") return [];
+    const window = trimesterWindow(unit, byId.get(num(unit.teaching_period_id, -1)));
+    return [
+      {
+        projectId: project.id,
+        unitId: num(unit.id, num(project.unit_id, -1)),
+        window,
+      },
+    ];
+  });
+  const strip = ({ projectId, unitId }: (typeof candidates)[number]) => ({ projectId, unitId });
+  const current = candidates.filter(({ window }) => withinTrimester(window, nowMs));
+  if (current.length > 0) return current.map(strip);
+  const finished = candidates.filter(({ window }) => window.end !== null && window.end <= nowMs);
+  const latestEnd = Math.max(...finished.map(({ window }) => window.end ?? 0));
+  return (
+    finished.length > 0 ? finished.filter(({ window }) => window.end === latestEnd) : candidates
+  ).map(strip);
+}
+
+/**
+ * The overview straight from OnTrack's API: each current project with its
+ * unit (which holds the task definitions) and the teaching periods for the
+ * period label and dates.
+ */
+export function normalizeOnTrackApiOverview(input: {
+  readonly projects: ReadonlyArray<{ readonly project: unknown; readonly unit: unknown }>;
+  readonly periods: unknown;
+  readonly fetchedAt: string;
+}): CampusOnTrackOverviewResult {
+  const periods = periodsById(input.periods);
+  const nowMs = epochOf(input.fetchedAt) ?? 0;
+  const units: OnTrackUnit[] = [];
+  const tasks: OnTrackTask[] = [];
+  for (const entry of input.projects) {
+    const project = asRecord(entry.project);
+    const unit = asRecord(entry.unit);
+    const projectUnit = asRecord(project.unit);
+    if (typeof project.id !== "number") continue;
+    const unitCode = str(unit.code, str(projectUnit.code));
+    const period = periods.get(num(projectUnit.teaching_period_id, num(unit.teaching_period_id)));
+    units.push({
+      projectId: project.id,
+      unitCode,
+      unitName: str(unit.name, str(projectUnit.name, unitCode)),
+      teachingPeriod: period
+        ? `${str(period.period)} ${typeof period.year === "number" ? period.year : str(period.year)}`.trim()
+        : null,
+      startDate: text(period?.start_date) ?? text(unit.start_date) ?? text(projectUnit.start_date),
+      endDate: text(period?.end_date) ?? text(unit.end_date) ?? text(projectUnit.end_date),
+      isCurrent: withinTrimester(
+        trimesterWindow(Object.keys(unit).length > 0 ? unit : projectUnit, period),
+        nowMs,
+      ),
+      targetGrade: numOrNull(project.target_grade),
+      submittedGrade: numOrNull(project.submitted_grade),
+    });
+    const definitions = new Map(
+      asArray(unit.task_definitions).flatMap((definition) => {
+        const record = asRecord(definition);
+        return typeof record.id === "number" ? [[record.id, record] as const] : [];
+      }),
+    );
+    for (const rawTask of asArray(project.tasks)) {
+      const task = asRecord(rawTask);
+      const definition = definitions.get(num(task.task_definition_id, -1)) ?? {};
+      const normalized = normalizeApiTask({ task, definition, projectId: project.id, unitCode });
+      if (normalized) tasks.push(normalized);
+    }
+  }
+  return { units, tasks, meta: meta({ fetchedAt: input.fetchedAt }) };
+}
+
+/** One task's details from OnTrack's API: its row, definition, comments and submission. */
+export function normalizeOnTrackApiTask(input: {
+  readonly task: OnTrackTask;
+  readonly definition: unknown;
+  readonly comments: unknown;
+  readonly submission: unknown;
+  readonly fetchedAt: string;
+}): CampusOnTrackTaskResult {
+  const definition = asRecord(input.definition);
+  const submission = asRecord(input.submission);
+  return {
+    task: input.task,
+    description: text(definition.description),
+    targetGrade: numOrNull(definition.target_grade) ?? input.task.targetGrade,
+    weighting: numOrNull(definition.weighting) ?? input.task.weighting,
+    submission:
+      Object.keys(submission).length > 0
+        ? {
+            submissionDate: text(submission.submission_date),
+            status: text(submission.task_status),
+            hasPdf: bool(submission.has_pdf),
+          }
+        : null,
+    comments: asArray(input.comments).flatMap((entry) => {
+      const comment = asRecord(entry);
+      if (typeof comment.id !== "number") return [];
+      const author = asRecord(comment.author);
+      const name = [text(author.first_name), text(author.last_name)].filter(Boolean).join(" ");
+      return [
+        {
+          commentId: comment.id,
+          type: str(comment.type, "text"),
+          status: text(comment.status),
+          text: text(comment.comment),
+          createdAt: text(comment.created_at) ?? text(comment.date),
+          isNew: bool(comment.is_new),
+          author: name || text(author.email),
+          hasAttachment: bool(comment.has_attachment),
+        },
+      ];
+    }),
+    taskPagePath: `/projects/${input.task.projectId}/dashboard/${input.task.taskAbbreviation}`,
+    meta: meta({ fetchedAt: input.fetchedAt }),
   };
 }

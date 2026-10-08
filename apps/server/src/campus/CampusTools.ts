@@ -2,6 +2,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -13,7 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { LANE_SCRIPT_FILENAME, LANE_SCRIPT_SOURCE } from "./laneScriptSource.ts";
+import { LANE_SCRIPT_SOURCE } from "./laneScriptSource.ts";
 import { laneDetail } from "./normalize.ts";
 
 /**
@@ -62,6 +63,8 @@ export class CampusTools extends Context.Service<
     readonly ensureLane: Effect.Effect<boolean>;
     /** A file under the lane's data directory, or null when it is not there. */
     readonly readLaneFile: (relativePath: string) => Effect.Effect<string | null>;
+    /** Writes a private file under the lane's data directory; null removes it. */
+    readonly writeLaneFile: (relativePath: string, text: string | null) => Effect.Effect<void>;
     /**
      * Runs the fork's own lane script (sign-in, inbox, mail) against the broker
      * and returns its one-line JSON answer.
@@ -82,6 +85,12 @@ export interface LaneRunResult {
 }
 
 const LANE_RUN_TIMEOUT_MS = 200_000;
+// Named by its content so two servers (the installed app and a dev copy) that
+// share the lane's data directory never run each other's script.
+const LANE_SCRIPT_FILENAME = `t3-lane-${NodeCrypto.createHash("sha256")
+  .update(LANE_SCRIPT_SOURCE)
+  .digest("hex")
+  .slice(0, 12)}.mjs`;
 const decodeLaneRunResult = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -311,6 +320,15 @@ const make = Effect.gen(function* () {
         .then((text): string | null => text)
         .catch((): string | null => null),
     );
+  const writeLaneFile = (relativePath: string, text: string | null) =>
+    Effect.promise(() => {
+      const target = NodePath.join(config.dataDir, relativePath);
+      return (
+        text === null
+          ? NodeFS.promises.rm(target, { force: true })
+          : NodeFS.promises.writeFile(target, text, { mode: 0o600 })
+      ).catch(() => undefined);
+    });
   // Lane scripts still running when the server shuts down; a live child keeps
   // the old process (and its port) alive, so they are stopped with it.
   const scripts = new Set<NodeChildProcess.ChildProcess>();
@@ -386,7 +404,7 @@ const make = Effect.gen(function* () {
     (await probePort(config.brokerPort)) ? true : startBroker(config),
   );
 
-  return CampusTools.of({ call, laneOnline, ensureLane, readLaneFile, laneRun });
+  return CampusTools.of({ call, laneOnline, ensureLane, readLaneFile, writeLaneFile, laneRun });
 });
 
 export const layer = Layer.effect(CampusTools, make);
