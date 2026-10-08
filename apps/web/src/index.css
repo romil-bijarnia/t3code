@@ -2494,3 +2494,22 @@ code {
   outline-offset: 2px;
   border-radius: 0.5rem;
 }
+
+/* Codex composer surface: 22px corners with a one-pixel inner hairline, and no
+   dividers between the "+" and the permission pill. */
+[data-chat-composer-surface="true"] {
+  border-radius: 22px;
+  box-shadow: inset 0 0 1px 0 rgb(255 255 255 / 0.2);
+}
+
+[data-chat-composer-controls="left"] [data-slot="separator"],
+[data-chat-composer-actions="right"] [data-slot="separator"] {
+  display: none;
+}
+
+/* The send button is a white disc with a black arrow, as in Codex. */
+[data-chat-composer-surface="true"] {
+  --message-action: #ffffff;
+  --message-action-foreground: #000000;
+  --message-action-hover: #e6e6e6;
+}
