@@ -11,19 +11,20 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  ArrowLeftIcon,
   BlocksIcon,
   BotIcon,
-  createLucideIcon,
   CalendarClockIcon,
   GitBranchIcon,
   HardDriveIcon,
-  PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  PanelsTopLeftIcon,
   SearchIcon,
   Settings2Icon,
   XIcon,
+  createLucideIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -39,7 +40,7 @@ import {
   useSidebar,
   SidebarInput,
 } from "../ui/sidebar";
-import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
+import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -101,6 +102,34 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: SETTINGS_SECTION_ICONS[to],
 }));
 
+// Codex groups its settings into Personal, Integrations and Coding.
+const SETTINGS_NAV_GROUPS: ReadonlyArray<{ heading: string; paths: ReadonlyArray<SettingsPath> }> =
+  [
+    {
+      heading: "Personal",
+      paths: [
+        "/settings/general",
+        "/settings/appearance",
+        "/settings/keybindings",
+        "/settings/storage",
+        "/settings/archived",
+      ],
+    },
+    {
+      heading: "Integrations",
+      paths: [
+        "/settings/providers",
+        "/settings/integrations",
+        "/settings/connections",
+        "/settings/snap-shot",
+      ],
+    },
+    {
+      heading: "Coding",
+      paths: ["/settings/projects", "/settings/source-control", "/settings/scheduled-tasks"],
+    },
+  ];
+
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
   return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground/60" />;
@@ -108,6 +137,10 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const navigateToMainApp = useNavigateToMainApp();
+  const handleBackToApp = useCallback(() => {
+    void navigateToMainApp();
+  }, [navigateToMainApp]);
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
@@ -238,6 +271,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup>
           <div className="flex flex-col gap-2">
+            <SidebarMenu className="mb-1">
+              <SidebarMenuItem>
+                <SidebarMenuButton onClick={handleBackToApp}>
+                  <ArrowLeftIcon />
+                  <span>Back to app</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
             <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
               <SidebarInput
@@ -322,29 +363,42 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <SidebarMenu>
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isGeneralDetailPage =
-                    item.to === "/settings/general" &&
-                    pathname === "/settings/open-source-licenses";
-                  const isActive =
-                    isGeneralDetailPage ||
-                    pathname === item.to ||
-                    pathname.startsWith(`${item.to}/`);
+              <div className="flex flex-col gap-4">
+                {SETTINGS_NAV_GROUPS.map((group) => {
+                  const items = navItems.filter((item) => group.paths.includes(item.to));
+                  if (items.length === 0) return null;
                   return (
-                    <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        onClick={() => handleSectionClick(item.to)}
-                      >
-                        <Icon />
-                        <span className="truncate">{item.label}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
+                    <div key={group.heading}>
+                      <div className="flex h-8 items-center pl-(--sidebar-row-content-inset) text-base text-sidebar-muted-foreground">
+                        {group.heading}
+                      </div>
+                      <SidebarMenu>
+                        {items.map((item) => {
+                          const Icon = item.icon;
+                          const isGeneralDetailPage =
+                            item.to === "/settings/general" &&
+                            pathname === "/settings/open-source-licenses";
+                          const isActive =
+                            isGeneralDetailPage ||
+                            pathname === item.to ||
+                            pathname.startsWith(`${item.to}/`);
+                          return (
+                            <SidebarMenuItem key={item.to}>
+                              <SidebarMenuButton
+                                isActive={isActive}
+                                onClick={() => handleSectionClick(item.to)}
+                              >
+                                <Icon />
+                                <span className="truncate">{item.label}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
+                    </div>
                   );
                 })}
-              </SidebarMenu>
+              </div>
             )}
           </div>
         </SidebarGroup>
@@ -353,10 +407,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
-        <div className="flex items-center gap-1">
-          <div className="min-w-0 flex-1">
-            <SidebarUtilityMenu />
-          </div>
+        <div className="flex items-center justify-end gap-1">
           <Suspense fallback={null}>
             <T3ConnectSidebarAvatar />
           </Suspense>
