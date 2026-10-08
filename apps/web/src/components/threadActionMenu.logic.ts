@@ -11,6 +11,8 @@ export type ThreadActionMenuId =
   | "filter-by-project"
   | "project-settings"
   | "add-scheduled-task"
+  | "move-to"
+  | `move-to:${string}`
   | "pin"
   | "unpin"
   | "settle"
@@ -100,6 +102,13 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** Where the thread can move within its environment, Spaces first; absent or empty hides "Move to". */
+  readonly moveTargets?: ReadonlyArray<{
+    readonly projectId: string;
+    readonly label: string;
+    readonly kind: "space" | "project";
+    readonly current: boolean;
+  }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -226,6 +235,27 @@ export function buildThreadActionMenuItems(
                 checked: !state.autoSettleEnabled,
               },
             ],
+          },
+        ]
+      : []),
+    // Any chat can move into any Space or project, whatever provider or
+    // project it came from; Spaces lead and a separator opens the projects.
+    ...(state.moveTargets && state.moveTargets.length > 0
+      ? [
+          {
+            id: "move-to" as const,
+            label: "Move to",
+            icon: "folder",
+            children: state.moveTargets.map((target, index) => ({
+              id: `move-to:${target.projectId}` as const,
+              label: target.label,
+              checked: target.current,
+              ...(target.kind === "project" &&
+              index > 0 &&
+              state.moveTargets?.[index - 1]?.kind === "space"
+                ? { separatorBefore: true }
+                : {}),
+            })),
           },
         ]
       : []),

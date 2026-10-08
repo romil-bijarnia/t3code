@@ -146,6 +146,33 @@ describe("buildThreadActionMenuItems", () => {
     expect(items[taskIndex + 2]?.id).toBe("archive");
   });
 
+  it("offers Move to with Spaces first and projects after a separator", () => {
+    expect(allIds(baseState)).not.toContain("move-to");
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      moveTargets: [
+        { projectId: "project:uni", label: "Uni", kind: "space", current: true },
+        { projectId: "project:home", label: "Home", kind: "space", current: false },
+        { projectId: "project:repo", label: "repo", kind: "project", current: false },
+      ],
+    });
+    const move = items.find((item) => item.id === "move-to");
+    expect(move).toMatchObject({ label: "Move to", icon: "folder" });
+    expect(
+      move?.children?.map((child) => [child.id, child.label, child.checked, child.separatorBefore]),
+    ).toEqual([
+      ["move-to:project:uni", "Uni", true, undefined],
+      ["move-to:project:home", "Home", false, undefined],
+      ["move-to:project:repo", "repo", false, true],
+    ]);
+    const denied = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      moveTargets: [{ projectId: "project:uni", label: "Uni", kind: "space", current: false }],
+    });
+    expect(denied.find((item) => item.id === "move-to")?.disabled).toBe(true);
+  });
+
   it("opens the lifecycle group with a separator on its first supported item", () => {
     const withPin = buildThreadActionMenuItems(baseState);
     expect(withPin.find((item) => item.id === "pin")?.separatorBefore).toBe(true);

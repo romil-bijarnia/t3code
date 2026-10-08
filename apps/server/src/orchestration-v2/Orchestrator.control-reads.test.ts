@@ -25,6 +25,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -42,6 +43,7 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -622,5 +624,75 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const parentAfterChildLink = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("moves a thread into another project through a metadata update", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    const threadId = ThreadId.make("thread:move-project");
+    const spaceProjectId = ProjectId.make("project:move-space");
+    yield* projects.apply({
+      sequence: 1,
+      eventId: EventId.make("event-move-space"),
+      aggregateKind: "project",
+      aggregateId: spaceProjectId,
+      occurredAt: "2026-10-08T00:00:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId: spaceProjectId,
+        title: "Uni",
+        workspaceRoot: "/home/romil/Spaces/Uni",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-10-08T00:00:00.000Z",
+        updatedAt: "2026-10-08T00:00:00.000Z",
+      },
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-move"),
+      threadId,
+      projectId: ProjectId.make("project:move-source"),
+      title: "Movable",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("move-to-space"),
+      threadId,
+      projectId: spaceProjectId,
+    });
+    const moved = yield* projections.getThreadProjection(threadId);
+    assert.equal(moved.thread.projectId, spaceProjectId);
+    assert.equal(moved.thread.title, "Movable");
+    const shell = yield* projections.getThreadShell(threadId);
+    assert.equal(shell?.projectId, spaceProjectId);
+    // An unknown target is refused and the thread stays where it is.
+    const refused = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-to-missing"),
+        threadId,
+        projectId: ProjectId.make("project:nowhere"),
+      }),
+    );
+    assert.equal(refused._tag, "Failure");
+    assert.equal(
+      (yield* projections.getThreadProjection(threadId)).thread.projectId,
+      spaceProjectId,
+    );
   }).pipe(Effect.provide(layerTest)),
 );

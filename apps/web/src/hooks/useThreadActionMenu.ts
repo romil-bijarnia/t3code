@@ -9,6 +9,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
+import { isSpaceWorkspaceRoot, isTrashedSpaceWorkspaceRoot } from "../spaces/spaces";
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
@@ -147,6 +149,25 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const moveTargets = projects
+          .filter(
+            (project) =>
+              project.environmentId === threadRef.environmentId &&
+              !isTrashedSpaceWorkspaceRoot(project.workspaceRoot),
+          )
+          .map((project) => ({
+            projectId: project.id,
+            label: project.title,
+            kind: isSpaceWorkspaceRoot(project.workspaceRoot)
+              ? ("space" as const)
+              : ("project" as const),
+            current: project.id === thread.projectId,
+          }))
+          .toSorted(
+            (left, right) =>
+              (left.kind === "space" ? 0 : 1) - (right.kind === "space" ? 0 : 1) ||
+              left.label.localeCompare(right.label),
+          );
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -160,6 +181,7 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          moveTargets,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -195,6 +217,17 @@ export function useThreadActionMenu(input: {
             failureToast(title, squashAtomCommandFailure(result));
           }
         };
+        if (action.startsWith("move-to:")) {
+          const projectId = action.slice("move-to:".length) as ProjectId;
+          if (projectId === thread.projectId) return;
+          await reportFailure("Failed to move chat", () =>
+            updateThreadMetadata({
+              environmentId: threadRef.environmentId,
+              input: { threadId: threadRef.threadId, projectId },
+            }),
+          );
+          return;
+        }
         switch (action) {
           case "project-settings": {
             const project = projects.find(
