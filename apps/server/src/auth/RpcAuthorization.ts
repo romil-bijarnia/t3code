@@ -113,6 +113,17 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
+  [WS_METHODS.campusStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusOntrackOverview]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusOntrackTask]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusOutlookInbox]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusOutlookEmail]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusOutlookCalendar]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusTeamsThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusTeamsThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.campusDeakinsyncPage]: AuthOrchestrationReadScope,
+  // Sign-in opens a window on the host, so it needs the same scope as other host actions.
+  [WS_METHODS.campusSignIn]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,

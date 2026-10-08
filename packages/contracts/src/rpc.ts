@@ -320,6 +320,28 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  CampusDeakinSyncPageInput,
+  CampusDeakinSyncPageResult,
+  CampusError,
+  CampusListInput,
+  CampusOnTrackOverviewInput,
+  CampusOnTrackOverviewResult,
+  CampusOnTrackTaskInput,
+  CampusOnTrackTaskResult,
+  CampusOutlookCalendarResult,
+  CampusOutlookEmailInput,
+  CampusOutlookEmailResult,
+  CampusOutlookInboxResult,
+  CampusSignInInput,
+  CampusSignInResult,
+  CampusStatusInput,
+  CampusStatusResult,
+  CampusTeamsThreadInput,
+  CampusTeamsThreadResult,
+  CampusTeamsThreadsInput,
+  CampusTeamsThreadsResult,
+} from "./campus.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -485,6 +507,18 @@ export const WS_METHODS = {
   secretsAnswerRequest: "secrets.answerRequest",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  // Campus pages: OnTrack, DeakinSync, Teams and Outlook through the local browser lane
+  campusStatus: "campus.status",
+  campusOntrackOverview: "campus.ontrackOverview",
+  campusOntrackTask: "campus.ontrackTask",
+  campusOutlookInbox: "campus.outlookInbox",
+  campusOutlookEmail: "campus.outlookEmail",
+  campusOutlookCalendar: "campus.outlookCalendar",
+  campusTeamsThreads: "campus.teamsThreads",
+  campusTeamsThread: "campus.teamsThread",
+  campusDeakinsyncPage: "campus.deakinsyncPage",
+  campusSignIn: "campus.signIn",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1725,6 +1759,58 @@ const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   stream: true,
 });
 
+const campusError = Schema.Union([CampusError, EnvironmentAuthorizationError]);
+const WsCampusStatusRpc = Rpc.make(WS_METHODS.campusStatus, {
+  payload: CampusStatusInput,
+  success: CampusStatusResult,
+  error: campusError,
+});
+const WsCampusOntrackOverviewRpc = Rpc.make(WS_METHODS.campusOntrackOverview, {
+  payload: CampusOnTrackOverviewInput,
+  success: CampusOnTrackOverviewResult,
+  error: campusError,
+});
+const WsCampusOntrackTaskRpc = Rpc.make(WS_METHODS.campusOntrackTask, {
+  payload: CampusOnTrackTaskInput,
+  success: CampusOnTrackTaskResult,
+  error: campusError,
+});
+const WsCampusOutlookInboxRpc = Rpc.make(WS_METHODS.campusOutlookInbox, {
+  payload: CampusListInput,
+  success: CampusOutlookInboxResult,
+  error: campusError,
+});
+const WsCampusOutlookEmailRpc = Rpc.make(WS_METHODS.campusOutlookEmail, {
+  payload: CampusOutlookEmailInput,
+  success: CampusOutlookEmailResult,
+  error: campusError,
+});
+const WsCampusOutlookCalendarRpc = Rpc.make(WS_METHODS.campusOutlookCalendar, {
+  payload: CampusListInput,
+  success: CampusOutlookCalendarResult,
+  error: campusError,
+});
+const WsCampusTeamsThreadsRpc = Rpc.make(WS_METHODS.campusTeamsThreads, {
+  payload: CampusTeamsThreadsInput,
+  success: CampusTeamsThreadsResult,
+  error: campusError,
+});
+const WsCampusTeamsThreadRpc = Rpc.make(WS_METHODS.campusTeamsThread, {
+  payload: CampusTeamsThreadInput,
+  success: CampusTeamsThreadResult,
+  error: campusError,
+});
+const WsCampusDeakinsyncPageRpc = Rpc.make(WS_METHODS.campusDeakinsyncPage, {
+  payload: CampusDeakinSyncPageInput,
+  success: CampusDeakinSyncPageResult,
+  error: campusError,
+});
+const WsCampusSignInRpc = Rpc.make(WS_METHODS.campusSignIn, {
+  payload: CampusSignInInput,
+  success: CampusSignInResult,
+  error: campusError,
+});
+
 const WsSubscribeBackgroundPolicyRpc = Rpc.make(WS_METHODS.subscribeBackgroundPolicy, {
   payload: Schema.Struct({}),
   success: BackgroundPolicySnapshot,
@@ -1807,6 +1893,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsCampusStatusRpc,
+  WsCampusOntrackOverviewRpc,
+  WsCampusOntrackTaskRpc,
+  WsCampusOutlookInboxRpc,
+  WsCampusOutlookEmailRpc,
+  WsCampusOutlookCalendarRpc,
+  WsCampusTeamsThreadsRpc,
+  WsCampusTeamsThreadRpc,
+  WsCampusDeakinsyncPageRpc,
+  WsCampusSignInRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

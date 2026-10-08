@@ -28,11 +28,26 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckMethods = new Set<string>([WS_METHODS.serverGetUsageSummary]);
+// A campus sign-in waits on the person at a window for as long as they take.
+const untrackedRpcAckMethods = new Set<string>([
+  WS_METHODS.serverGetUsageSummary,
+  WS_METHODS.campusSignIn,
+]);
+// Campus reads drive a browser through the lane; a signed-out portal can take
+// most of a minute to say so.
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
   WS_METHODS.serverUpdateServer,
+  WS_METHODS.campusStatus,
+  WS_METHODS.campusOntrackOverview,
+  WS_METHODS.campusOntrackTask,
+  WS_METHODS.campusOutlookInbox,
+  WS_METHODS.campusOutlookEmail,
+  WS_METHODS.campusOutlookCalendar,
+  WS_METHODS.campusTeamsThreads,
+  WS_METHODS.campusTeamsThread,
+  WS_METHODS.campusDeakinsyncPage,
 ]);
 
 const slowRpcAckRequestsAtom = Atom.make<ReadonlyArray<SlowRpcAckRequest>>([]).pipe(

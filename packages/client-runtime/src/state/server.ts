@@ -1076,6 +1076,43 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    // Campus pages read through the host's browser lane; each is a plain query.
+    campusStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:status",
+      tag: WS_METHODS.campusStatus,
+    }),
+    campusOntrackOverview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:ontrack-overview",
+      tag: WS_METHODS.campusOntrackOverview,
+    }),
+    campusOntrackTask: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:ontrack-task",
+      tag: WS_METHODS.campusOntrackTask,
+    }),
+    campusOutlookInbox: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:outlook-inbox",
+      tag: WS_METHODS.campusOutlookInbox,
+    }),
+    campusOutlookEmail: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:outlook-email",
+      tag: WS_METHODS.campusOutlookEmail,
+    }),
+    campusOutlookCalendar: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:outlook-calendar",
+      tag: WS_METHODS.campusOutlookCalendar,
+    }),
+    campusTeamsThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:teams-threads",
+      tag: WS_METHODS.campusTeamsThreads,
+    }),
+    campusTeamsThread: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:teams-thread",
+      tag: WS_METHODS.campusTeamsThread,
+    }),
+    campusDeakinsyncPage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:campus:deakinsync-page",
+      tag: WS_METHODS.campusDeakinsyncPage,
+    }),
     scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-deliveries",
       tag: WS_METHODS.scheduledTasksListWebhookDeliveries,
@@ -1292,6 +1329,11 @@ export function createServerEnvironmentAtoms<R, E>(
     runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:run-now",
       tag: WS_METHODS.scheduledTasksRunNow,
+    }),
+    // A sign-in waits on the person at the host's window; it must not queue behind config writes.
+    campusSignIn: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:campus:sign-in",
+      tag: WS_METHODS.campusSignIn,
     }),
     rotateScheduledTaskWebhookToken: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:rotate-webhook-token",

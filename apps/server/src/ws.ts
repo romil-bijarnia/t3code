@@ -120,6 +120,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
+import * as Campus from "./campus/CampusService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
@@ -1219,6 +1220,7 @@ const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const campus = yield* Campus.CampusService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2056,6 +2058,16 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
+        [WS_METHODS.campusStatus]: (_input) => campus.status,
+        [WS_METHODS.campusOntrackOverview]: (input) => campus.ontrackOverview(input),
+        [WS_METHODS.campusOntrackTask]: (input) => campus.ontrackTask(input),
+        [WS_METHODS.campusOutlookInbox]: (input) => campus.outlookInbox(input),
+        [WS_METHODS.campusOutlookEmail]: (input) => campus.outlookEmail(input),
+        [WS_METHODS.campusOutlookCalendar]: (input) => campus.outlookCalendar(input),
+        [WS_METHODS.campusTeamsThreads]: (input) => campus.teamsThreads(input),
+        [WS_METHODS.campusTeamsThread]: (input) => campus.teamsThread(input),
+        [WS_METHODS.campusDeakinsyncPage]: (input) => campus.deakinsyncPage(input),
+        [WS_METHODS.campusSignIn]: (input) => campus.signIn(input),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
