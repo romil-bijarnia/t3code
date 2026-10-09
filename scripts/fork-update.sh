@@ -15,7 +15,7 @@
 #
 # Anything it cannot finish leaves the fork's branch untouched on GitHub and
 # says why in a notification and in ~/Library/Logs/t3code-fork-update.log.
-set -euo pipefail
+set -Eeuo pipefail
 
 FORK_URL="https://github.com/romil-bijarnia/t3code.git"
 UPSTREAM_URL="https://github.com/pingdotgg/t3code.git"
@@ -71,6 +71,7 @@ main() {
   fi
   echo $$ >"$LOCK"
   trap 'rm -f "$LOCK"' EXIT
+  trap 'fail "unexpected error at line $LINENO (see ~/Library/Logs/t3code-fork-update.log)"' ERR
   renice -n 10 $$ >/dev/null
 
   if [[ ! -d "$CLONE/.git" ]]; then
@@ -103,6 +104,10 @@ main() {
   stamp="$(date +%Y%m%d-%H%M)"
   upstream_head="$(git rev-parse --short upstream/main)"
 
+  # Dependencies first: the repo's commit hook needs vp, and Claude needs a
+  # working install to typecheck what it resolves.
+  pnpm install >"$LOGS/$stamp-deps.log" 2>&1 || fail "pnpm install failed ($LOGS/$stamp-deps.log)"
+
   if [[ "$incoming" -gt 0 ]]; then
     log "merging $incoming upstream commits (up to $upstream_head)"
     if ! git merge --quiet --no-edit upstream/main >"$LOGS/$stamp-merge.log" 2>&1; then
@@ -122,7 +127,8 @@ Resolve every conflict so upstream's change and the fork's feature both survive.
       [[ -z "$unresolved" ]] ||
         fail "merge conflicts with upstream $upstream_head need a hand ($LOGS/$stamp-resolve.txt)"
       git add -A
-      git commit --quiet --no-edit
+      git commit --quiet --no-edit >"$LOGS/$stamp-commit.log" 2>&1 ||
+        fail "could not commit the merge ($LOGS/$stamp-commit.log)"
     fi
   fi
 
@@ -132,7 +138,8 @@ Resolve every conflict so upstream's change and the fork's feature both survive.
       "Romil's T3 Code fork (branch $BRANCH) was just merged with upstream T3 Code, and the checks now fail. The output is in $LOGS/$stamp-checks.log (pnpm install, typecheck, lint, then tests without the mobile app). Fix the code so they pass, keeping upstream's intent and the fork's features (\`git log --oneline upstream/main..HEAD --no-merges\` lists the fork's commits). Rerun only what failed to confirm. If a failure comes from the machine rather than the code (a timeout, a broken install), rerun or reinstall instead of changing anything. Do not commit, push, retry or skip tests, or edit scripts/fork-update.sh."
     git add -A
     if ! git diff --cached --quiet; then
-      git commit --quiet -m "fix: keep the fork building on upstream $upstream_head"
+      git commit --quiet -m "fix: keep the fork building on upstream $upstream_head" \
+        >"$LOGS/$stamp-commit.log" 2>&1 || fail "could not commit the fixes ($LOGS/$stamp-commit.log)"
     fi
     run_checks "$LOGS/$stamp-checks-2.log" ||
       fail "checks still fail after merging upstream $upstream_head ($LOGS/$stamp-checks-2.log)"
