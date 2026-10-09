@@ -54,12 +54,16 @@ ask_claude() {
 # desktop tests otherwise all try to at once. The root package is left out of
 # the tests because its own test script reruns every package; mobile is left
 # out because its native tests need an iOS toolchain this Mac does not match.
+# Packages test one at a time and a failed test gets one more try: a few
+# upstream tests have wall-clock limits that a busy laptop misses, while a
+# real break fails both tries.
 run_checks() {
   local out="$1"
   {
     pnpm install && vp run --filter @t3tools/desktop ensure:electron &&
       pnpm typecheck && pnpm lint &&
-      vp run --filter '!@t3tools/monorepo' --filter '!@t3tools/mobile' test
+      vp run --concurrency-limit 1 --filter '!@t3tools/monorepo' --filter '!@t3tools/mobile' \
+        test --retry=1
   } >"$out" 2>&1
 }
 
@@ -85,10 +89,11 @@ main() {
   git fetch --quiet origin "$BRANCH"
   git fetch --quiet upstream main
   git checkout --quiet "$BRANCH"
-  # The clone holds no work of its own: anything here came from a run that
-  # stopped, so start again from what GitHub has.
+  # A run that stopped after committing its merge or fixes keeps them, so the
+  # next run picks up there; anything else starts again from what GitHub has.
   git merge --abort >/dev/null 2>&1 || true
-  git reset --quiet --hard "origin/$BRANCH"
+  git reset --quiet --hard HEAD
+  git merge-base --is-ancestor "origin/$BRANCH" HEAD || git reset --quiet --hard "origin/$BRANCH"
   git clean -fdq
 
   local installed=""
