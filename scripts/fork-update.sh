@@ -9,7 +9,7 @@
 #
 #   1. fetch the fork and upstream; stop if the installed app is current
 #   2. merge upstream/main; Claude Code resolves conflicts if there are any
-#   3. typecheck, lint and test; Claude Code fixes what the merge broke
+#   3. typecheck, lint and the fork's tests; Claude Code fixes what broke
 #   4. push romil/apps, then build, sign and install with fork-install.sh
 #      (which waits for T3 Code to quit before swapping the app)
 #
@@ -50,21 +50,30 @@ ask_claude() {
   claude -p "$3" --permission-mode bypassPermissions --strict-mcp-config >"$transcript" 2>&1 || true
 }
 
-# Electron is fetched up front, as CI does; pnpm does not unpack it, and the
-# desktop tests otherwise all try to at once. The root package is left out of
-# the tests because its own test script reruns every package; mobile is left
-# out because its native tests need an iOS toolchain this Mac does not match.
-# Packages test one at a time and a failed test gets one more try: a few
-# upstream tests have wall-clock limits that a busy laptop misses, while a
-# real break fails both tries.
+# Electron is fetched up front, as CI does; pnpm does not unpack it.
 run_checks() {
   local out="$1"
   {
     pnpm install && vp run --filter @t3tools/desktop ensure:electron &&
-      pnpm typecheck && pnpm lint &&
-      vp run --concurrency-limit 1 --filter '!@t3tools/monorepo' --filter '!@t3tools/mobile' \
-        test --retry=1
+      pnpm typecheck && pnpm lint && fork_tests
   } >"$out" 2>&1
+}
+
+# The fork's own tests and the upstream tests it changed: the behaviour a
+# merge can break. Upstream's CI runs the rest of its suite, and on this Mac a
+# few of those fail before any merge (temp-folder symlinks, installed editors).
+fork_tests() {
+  local dir files
+  for dir in $(changed_tests | cut -d/ -f1,2 | sort -u); do
+    files="$(changed_tests | grep "^$dir/" | sed "s#^$dir/##")"
+    # shellcheck disable=SC2086
+    pnpm --dir "$dir" test $files --retry=1 || return 1
+  done
+}
+
+changed_tests() {
+  git diff --name-only --diff-filter=d upstream/main HEAD |
+    grep -E '^(apps|packages)/[^/]+/.*\.test\.(ts|tsx|mjs)$' || true
 }
 
 main() {
@@ -140,7 +149,7 @@ Resolve every conflict so upstream's change and the fork's feature both survive.
   log "checking"
   if ! run_checks "$LOGS/$stamp-checks.log"; then
     ask_claude "fix failing checks" "$LOGS/$stamp-fix.txt" \
-      "Romil's T3 Code fork (branch $BRANCH) was just merged with upstream T3 Code, and the checks now fail. The output is in $LOGS/$stamp-checks.log (pnpm install, typecheck, lint, then tests without the mobile app). Fix the code so they pass, keeping upstream's intent and the fork's features (\`git log --oneline upstream/main..HEAD --no-merges\` lists the fork's commits). Rerun only what failed to confirm. If a failure comes from the machine rather than the code (a timeout, a broken install), rerun or reinstall instead of changing anything. Do not commit, push, retry or skip tests, or edit scripts/fork-update.sh."
+      "Romil's T3 Code fork (branch $BRANCH) was just merged with upstream T3 Code, and the checks now fail. The output is in $LOGS/$stamp-checks.log (pnpm install, typecheck, lint, then the fork's own tests). Fix the code so they pass, keeping upstream's intent and the fork's features (\`git log --oneline upstream/main..HEAD --no-merges\` lists the fork's commits). Rerun only what failed to confirm. If a failure comes from the machine rather than the code (a timeout, a broken install), rerun or reinstall instead of changing anything. Do not commit, push, retry or skip tests, or edit scripts/fork-update.sh."
     git add -A
     if ! git diff --cached --quiet; then
       git commit --quiet -m "fix: keep the fork building on upstream $upstream_head" \
