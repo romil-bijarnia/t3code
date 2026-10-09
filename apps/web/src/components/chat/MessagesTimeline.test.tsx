@@ -1353,7 +1353,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
-    expect(markup).toContain("rounded-2xl bg-message p-3");
+    expect(markup).toContain("rounded-3xl bg-foreground/5 px-4 py-2.5");
   });
 
   it("identifies user-role messages sent by another agent", async () => {

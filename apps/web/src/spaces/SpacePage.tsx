@@ -204,7 +204,7 @@ export function SpacePage({
             </div>
           ) : null}
         </WorkspacePageHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
           {!space ? (
             <p className="mx-auto max-w-3xl px-6 py-12 text-base text-muted-foreground">
               {projectsReady ? "This space no longer exists." : "Loading..."}

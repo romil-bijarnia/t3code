@@ -112,7 +112,7 @@ export function CampusPage({
             </Tooltip>
           </div>
         </WorkspacePageHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto border-t border-border">
+        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto border-t border-border">
           <div className="mx-auto w-full max-w-3xl px-6 pt-4 pb-16">
             {issue && hasContent ? (
               <CampusNotice

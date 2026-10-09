@@ -47,7 +47,7 @@ export function SpaceTrashPage() {
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-[47rem] flex-col gap-10 px-6 pt-10 pb-24">
             <section className="flex flex-col gap-2" aria-label="Spaces">
               <h2 className="text-sm font-medium text-muted-foreground">Spaces</h2>
