@@ -21,6 +21,8 @@ WORK="$HOME/Library/Caches/t3code-fork-build"
 CONFIG="$HOME/.config/t3code-fork"
 KEYCHAIN="$HOME/Library/Keychains/t3code-fork-signing.keychain-db"
 KEYCHAIN_PASSWORD_FILE="$CONFIG/signing-keychain-password"
+# fork-update.sh reads this to tell whether the installed app is current.
+INSTALLED_COMMIT_FILE="$CONFIG/installed-commit"
 IDENTITY="T3 Code Fork Local Signing"
 RUST_TARGET="aarch64-apple-darwin"
 MONITOR="$REPO/native/resource-monitor/target/$RUST_TARGET/release/t3-resource-monitor"
@@ -115,6 +117,7 @@ codesign --verify --deep --strict "$staged"
 
 if app_is_running; then
   log "built and signed; waiting for T3 Code to quit before installing"
+  /usr/bin/osascript -e 'display notification "An update is ready. It installs the next time you quit T3 Code." with title "T3 Code"' >/dev/null 2>&1 || true
   while app_is_running; do sleep 0.5; done
 fi
 
@@ -131,4 +134,5 @@ mv "$staged" "$INSTALLED"
 rm -rf "$WORK/out" "$WORK/stage"
 
 codesign --verify --deep --strict "$INSTALLED"
+git -C "$REPO" rev-parse HEAD >"$INSTALLED_COMMIT_FILE"
 log "installed $(installed_version) (was ${previous:-nothing})"
