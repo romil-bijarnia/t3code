@@ -25,6 +25,9 @@ CONFIG="$HOME/.config/t3code-fork"
 INSTALLED_COMMIT_FILE="$CONFIG/installed-commit"
 LOCK="$HOME/.local/share/t3code-fork/update.lock"
 LOGS="$HOME/.local/share/t3code-fork/logs"
+# The repo wants Node 24 (package.json engines); Homebrew's default is newer,
+# and some web tests fail under it. Official v24 build, unpacked beside the clone.
+NODE24="$HOME/.local/share/t3code-fork/node24/bin"
 
 log() { printf '[fork-update %s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
@@ -39,18 +42,24 @@ fail() {
 }
 
 # Claude Code works headless in the clone. It edits files only; this script
-# makes every commit, so nothing it writes carries attribution lines.
+# makes every commit, so nothing it writes carries attribution lines. No MCP
+# servers: it only needs the shell and the files.
 ask_claude() {
   local task="$1" transcript="$2"
   log "asking Claude Code to $task (transcript: $transcript)"
-  claude -p "$3" --permission-mode bypassPermissions >"$transcript" 2>&1 || true
+  claude -p "$3" --permission-mode bypassPermissions --strict-mcp-config >"$transcript" 2>&1 || true
 }
 
+# Electron is fetched up front, as CI does; pnpm does not unpack it, and the
+# desktop tests otherwise all try to at once. The root package is left out of
+# the tests because its own test script reruns every package; mobile is left
+# out because its native tests need an iOS toolchain this Mac does not match.
 run_checks() {
   local out="$1"
   {
-    pnpm install && pnpm typecheck && pnpm lint &&
-      vp run -r --filter '!@t3tools/mobile' test
+    pnpm install && vp run --filter @t3tools/desktop ensure:electron &&
+      pnpm typecheck && pnpm lint &&
+      vp run --filter '!@t3tools/monorepo' --filter '!@t3tools/mobile' test
   } >"$out" 2>&1
 }
 
@@ -70,7 +79,7 @@ main() {
     git -C "$CLONE" remote add upstream "$UPSTREAM_URL"
   fi
   cd "$CLONE"
-  export PATH="$CLONE/node_modules/.bin:$PATH"
+  export PATH="$CLONE/node_modules/.bin:$NODE24:$PATH"
 
   git fetch --quiet origin "$BRANCH"
   git fetch --quiet upstream main
@@ -120,7 +129,7 @@ Resolve every conflict so upstream's change and the fork's feature both survive.
   log "checking"
   if ! run_checks "$LOGS/$stamp-checks.log"; then
     ask_claude "fix failing checks" "$LOGS/$stamp-fix.txt" \
-      "Romil's T3 Code fork (branch $BRANCH) was just merged with upstream T3 Code, and the checks now fail. The output is in $LOGS/$stamp-checks.log (pnpm install, typecheck, lint, then tests without the mobile app). Fix the code so they pass, keeping upstream's intent and the fork's features (\`git log --oneline upstream/main..HEAD --no-merges\` lists the fork's commits). Rerun what failed to confirm. Do not commit, push, or skip or delete tests."
+      "Romil's T3 Code fork (branch $BRANCH) was just merged with upstream T3 Code, and the checks now fail. The output is in $LOGS/$stamp-checks.log (pnpm install, typecheck, lint, then tests without the mobile app). Fix the code so they pass, keeping upstream's intent and the fork's features (\`git log --oneline upstream/main..HEAD --no-merges\` lists the fork's commits). Rerun only what failed to confirm. If a failure comes from the machine rather than the code (a timeout, a broken install), rerun or reinstall instead of changing anything. Do not commit, push, retry or skip tests, or edit scripts/fork-update.sh."
     git add -A
     if ! git diff --cached --quiet; then
       git commit --quiet -m "fix: keep the fork building on upstream $upstream_head"
