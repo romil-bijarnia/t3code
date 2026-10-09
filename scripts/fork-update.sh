@@ -66,7 +66,7 @@ main() {
 
   if [[ ! -d "$CLONE/.git" ]]; then
     log "cloning the fork into $CLONE"
-    git clone --quiet --filter=blob:none --branch "$BRANCH" "$FORK_URL" "$CLONE"
+    git clone --quiet --branch "$BRANCH" "$FORK_URL" "$CLONE"
     git -C "$CLONE" remote add upstream "$UPSTREAM_URL"
   fi
   cd "$CLONE"
