@@ -81,6 +81,21 @@ installed_version() {
   defaults read "$INSTALLED/Contents/Info" CFBundleShortVersionString 2>/dev/null || true
 }
 
+# One install at a time: a second one (say the morning update while this one
+# still waits for T3 Code to quit) waits its turn instead of sharing $WORK.
+LOCK_DIR="$WORK.lock"
+mkdir -p "$(dirname "$WORK")"
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+    rm -rf "$LOCK_DIR"
+    continue
+  fi
+  sleep 5
+done
+echo $$ >"$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 base_version="$(node -p "require('$REPO/apps/desktop/package.json').version.split('-')[0]")"
 next_version="$(node -p "const [a, b, c] = '$base_version'.split('.').map(Number); [a, b, c + 1].join('.')")"
 # Semver drops leading zeros from numeric parts (0118 becomes 118), so do the
@@ -122,6 +137,10 @@ if app_is_running; then
 fi
 
 previous="$(installed_version)"
+if [[ ! -d "$staged" ]]; then
+  log "the staged build is missing; leaving the installed app alone"
+  exit 1
+fi
 if [[ -d "$INSTALLED" ]]; then
   if [[ "$previous" == *-preview.* ]]; then
     # An earlier build of this fork: reproducible, so not worth keeping.
