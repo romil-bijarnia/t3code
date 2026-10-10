@@ -7621,6 +7621,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     "absolute right-px z-10 h-12 w-auto gap-0 py-0 sm:gap-0 sm:py-0",
                   isComposerResting &&
                     (showInlineRestingControls ? "bottom-[calc(2rem+1px)]" : "bottom-px"),
+                  // A narrow composer sheds labels in Codex's order: effort, then
+                  // access, then the model name, then the chevrons. Send always stays.
+                  !isComposerResting && [
+                    "@max-[572px]/composer-surface:[&_[data-chat-composer-actions=right]_[data-composer-control-label]]:hidden",
+                    "@max-[500px]/composer-surface:[&_[data-chat-composer-controls=left]_[data-composer-control-label]]:hidden",
+                    "@max-[420px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:hidden",
+                    "@max-[320px]/composer-surface:[&_svg[data-composer-control-chevron]]:hidden",
+                  ],
                 )}
               >
                 <div
@@ -7628,7 +7636,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-controls="left"
                   data-chat-composer-footer-controls="true"
                   className={cn(
-                    "relative -m-1 -ms-3.5 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                    "relative -m-1 -ms-3.5 flex shrink-0 items-center gap-1 overflow-x-auto p-1 ps-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                     isComposerResting && "hidden",
                   )}
                 >
@@ -7650,7 +7658,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   data-chat-composer-primary-actions-compact={
                     isComposerPrimaryActionsCompact ? "true" : "false"
                   }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  className="flex min-w-0 flex-nowrap items-center justify-end gap-2"
                 >
                   {composerControlsCollapsed || showProviderUnavailable ? (
                     attachButton
