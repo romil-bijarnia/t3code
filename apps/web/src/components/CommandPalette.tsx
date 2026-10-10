@@ -67,6 +67,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { requestThreadFindOpen } from "./chat/threadFindActionBus";
 import {
@@ -2256,6 +2257,17 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:spaces-trash",
+    searchTerms: ["trash", "deleted", "restore", "spaces", "pages", "bin"],
+    title: "Open Trash",
+    icon: <Trash2Icon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/spaces/trash" });
     },
   });
 

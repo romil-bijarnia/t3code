@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, EllipsisIcon, FileTextIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon, FileTextIcon, PlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback, useMemo, useState } from "react";
 
@@ -56,8 +56,8 @@ type PendingDialog =
 
 /**
  * The Spaces section of the sidebar, after ChatGPT: each Space unfolds into
- * its page tree, rows grow a "…" menu and a plus on hover, and Trash sits at
- * the bottom.
+ * its page tree and rows grow a "…" menu and a plus on hover. Trash stays out
+ * of the list, as in ChatGPT; it opens from a Space's "…" menu and from ⌘K.
  */
 export const SidebarSpaces = memo(function SidebarSpaces() {
   const spaces = useSpaces();
@@ -130,6 +130,7 @@ export const SidebarSpaces = memo(function SidebarSpaces() {
             space={space}
             active={active?.spaceId === space.id ? active : null}
             onOpen={openSpace}
+            onOpenTrash={openTrash}
             onDialog={setPending}
           />
         ))}
@@ -141,12 +142,6 @@ export const SidebarSpaces = memo(function SidebarSpaces() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         ) : null}
-        <SidebarMenuItem>
-          <SidebarMenuButton isActive={pathname === "/spaces/trash"} onClick={openTrash}>
-            <Trash2Icon />
-            <span>Trash</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
       </SidebarMenu>
       <NewSpaceDialog
         key={dialogKey}
@@ -239,11 +234,13 @@ const SidebarSpaceRow = memo(function SidebarSpaceRow({
   space,
   active,
   onOpen,
+  onOpenTrash,
   onDialog,
 }: {
   readonly space: EnvironmentProject;
   readonly active: ActiveSpaceLocation | null;
   readonly onOpen: (spaceId: string, page?: string) => void;
+  readonly onOpenTrash: () => void;
   readonly onDialog: (pending: PendingDialog) => void;
 }) {
   const { handleNewThread } = useHandleNewThread();
@@ -288,6 +285,7 @@ const SidebarSpaceRow = memo(function SidebarSpaceRow({
               Assistant instructions
             </MenuItem>
             <MenuSeparator />
+            <MenuItem onClick={onOpenTrash}>Trash</MenuItem>
             <MenuItem
               variant="destructive"
               onClick={() => onDialog({ kind: "delete-space", space })}
