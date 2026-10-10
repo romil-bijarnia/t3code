@@ -23,7 +23,7 @@ export function SpaceIconPicker({
             aria-label={option.label}
             aria-pressed={value.icon === option.icon}
             className={cn(
-              "flex size-10 items-center justify-center rounded-lg outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+              "flex size-10 items-center justify-center rounded-lg outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               value.icon === option.icon && "bg-accent ring-1 ring-foreground/24",
             )}
             style={hex ? { color: hex } : undefined}
@@ -41,7 +41,7 @@ export function SpaceIconPicker({
             aria-label={option.label}
             aria-pressed={value.color === option.value}
             className={cn(
-              "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               value.color === option.value && "border-foreground/64",
             )}
             onClick={() => onChange({ ...value, color: option.value })}

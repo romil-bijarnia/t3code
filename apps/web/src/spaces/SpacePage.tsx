@@ -345,7 +345,7 @@ function SpaceDocument({
                 <button
                   type="button"
                   aria-label="Change icon"
-                  className="self-start rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="self-start rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 />
               }
             >

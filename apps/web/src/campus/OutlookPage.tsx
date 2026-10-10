@@ -99,7 +99,7 @@ function InboxView({
                 <div
                   role="button"
                   tabIndex={0}
-                  className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2.5 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                  className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2.5 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   onClick={open}
                   onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     if (event.key !== "Enter" && event.key !== " ") return;

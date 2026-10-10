@@ -37,7 +37,7 @@ export const SidebarProfileRow = memo(function SidebarProfileRow() {
           <button
             type="button"
             aria-label="Open profile menu"
-            className="flex h-11 w-full min-w-0 items-center gap-2.5 rounded-(--control-radius) px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-sidebar-row-hover"
+            className="flex h-11 w-full min-w-0 items-center gap-2.5 rounded-(--control-radius) px-2 text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-[popup-open]:bg-sidebar-row-hover"
           />
         }
       >

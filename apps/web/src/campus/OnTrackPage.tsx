@@ -232,7 +232,7 @@ function UnitCard({
     <div
       role="button"
       tabIndex={0}
-      className="flex min-w-0 cursor-default flex-col gap-3 rounded-2xl border border-border px-4 py-4 outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex min-w-0 cursor-default flex-col gap-3 rounded-2xl border border-border px-4 py-4 outline-none hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       onClick={onOpen}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -334,7 +334,7 @@ function TaskGroup({
               <div
                 role="button"
                 tabIndex={0}
-                className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2 leading-6 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2 leading-6 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 onClick={() => onOpen(task)}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                   if (event.key !== "Enter" && event.key !== " ") return;
@@ -481,7 +481,7 @@ function TaskRow({
         role="button"
         tabIndex={0}
         aria-expanded={open}
-        className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2 leading-6 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-w-0 cursor-default items-center gap-3 rounded-lg px-2 py-2 leading-6 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={onToggle}
         onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
           if (event.target !== event.currentTarget) return;
