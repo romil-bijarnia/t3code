@@ -32,11 +32,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     // The titlebar row, not a padded SidebarHeader: it aligns to the window controls.
     <div
       className={cn(
-        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:pl-0",
+        "relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 pr-3",
         isElectron && "drag-region",
       )}
     >
-      <SidebarTrigger variant="ghost" className="relative top-auto z-10 translate-y-0 md:hidden" />
+      {/* Match the fixed control's inset and border compensation inside the sheet's safe area. */}
+      <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
+        <SidebarTrigger
+          variant="ghost"
+          className="relative top-auto translate-y-0"
+          aria-label="Toggle main sidebar"
+        />
+      </div>
       <div className="relative z-10 flex h-8 min-w-0 flex-1 items-center overflow-hidden py-0.5">
         <SidebarBrand />
       </div>
