@@ -35,10 +35,6 @@ const printer = unified().use(remarkGfm).use(remarkStringify, {
   rule: "-",
 });
 
-// ---------------------------------------------------------------------------
-// Markdown → Tiptap
-// ---------------------------------------------------------------------------
-
 export function markdownToDoc(markdown: string): JSONContent {
   const tree = parser.parse(markdown) as Root;
   const content = tree.children.flatMap((node) => blockToTiptap(node, markdown));
@@ -171,10 +167,6 @@ function rawBlock(node: RootContent, source: string): JSONContent {
       : printer.stringify({ type: "root", children: [node] } as Root);
   return { type: RAW_MARKDOWN_NODE, attrs: { markdown } };
 }
-
-// ---------------------------------------------------------------------------
-// Tiptap → Markdown
-// ---------------------------------------------------------------------------
 
 export function docToMarkdown(doc: JSONContent): string {
   const children = (doc.content ?? []).flatMap(blockToMdast);

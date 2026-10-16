@@ -106,10 +106,6 @@ export function spaceWorkspaceRoot(name: string): string {
   return `~/${SPACES_FOLDER}/${safeFileName(name)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Pages
-// ---------------------------------------------------------------------------
-
 export interface SpacePageRef {
   /** `README.md` for the Space itself, else `pages/.../Title.md`. */
   readonly relativePath: string;
@@ -213,10 +209,7 @@ export function pagesFromEntries(entries: ReadonlyArray<SpaceEntry>): ReadonlyAr
   return [...pages.values()].toSorted((left, right) => left.title.localeCompare(right.title));
 }
 
-// ---------------------------------------------------------------------------
-// Icons and colours, as in ChatGPT's Spaces
-// ---------------------------------------------------------------------------
-
+// The icon set and colours match ChatGPT's Spaces.
 export const SPACE_ICONS: ReadonlyArray<{
   readonly id: string;
   readonly icon: IconName;
@@ -292,10 +285,6 @@ export function spaceAppearance(project: Pick<EnvironmentProject, "projectIcon">
 export function spaceIconOverride(appearance: SpaceAppearance): ProjectIconOverride {
   return { kind: "lucide", name: appearance.icon, color: appearance.color };
 }
-
-// ---------------------------------------------------------------------------
-// Seed files
-// ---------------------------------------------------------------------------
 
 export function spaceSeedFiles(
   name: string,
