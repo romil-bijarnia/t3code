@@ -1,7 +1,6 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
 import type { IconName } from "lucide-react/dynamic";
-import { useMemo } from "react";
 
 import { useProjects } from "../state/entities";
 
@@ -63,24 +62,16 @@ export function spaceFolderName(workspaceRoot: string): string {
 
 export function useSpaces(): ReadonlyArray<EnvironmentProject> {
   const projects = useProjects();
-  return useMemo(
-    () =>
-      projects
-        .filter((project) => isSpaceWorkspaceRoot(project.workspaceRoot))
-        .toSorted((left, right) => left.title.localeCompare(right.title)),
-    [projects],
-  );
+  return projects
+    .filter((project) => isSpaceWorkspaceRoot(project.workspaceRoot))
+    .toSorted((left, right) => left.title.localeCompare(right.title));
 }
 
 export function useTrashedSpaces(): ReadonlyArray<EnvironmentProject> {
   const projects = useProjects();
-  return useMemo(
-    () =>
-      projects
-        .filter((project) => isTrashedSpaceWorkspaceRoot(project.workspaceRoot))
-        .toSorted((left, right) => right.workspaceRoot.localeCompare(left.workspaceRoot)),
-    [projects],
-  );
+  return projects
+    .filter((project) => isTrashedSpaceWorkspaceRoot(project.workspaceRoot))
+    .toSorted((left, right) => right.workspaceRoot.localeCompare(left.workspaceRoot));
 }
 
 export function useSpace(spaceId: string): EnvironmentProject | null {

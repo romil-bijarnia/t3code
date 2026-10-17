@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { memo, useCallback } from "react";
+import { memo } from "react";
 
 import { usePrimaryEnvironment, usePullRequestsSupported } from "../../state/environments";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
@@ -18,17 +18,14 @@ export const SidebarProfileRow = memo(function SidebarProfileRow() {
   const name = environment?.label?.trim() || "Local";
   const initial = name.charAt(0).toUpperCase();
 
-  const go = useCallback(
-    (to: "/settings" | "/settings/keybindings" | "/usage" | "/pull-requests") => {
-      if (isMobile) setOpenMobile(false);
-      if (to === "/pull-requests") {
-        void navigate({ to, search: readPullRequestListPreferences() });
-        return;
-      }
-      void navigate({ to });
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  const go = (to: "/settings" | "/settings/keybindings" | "/usage" | "/pull-requests") => {
+    if (isMobile) setOpenMobile(false);
+    if (to === "/pull-requests") {
+      void navigate({ to, search: readPullRequestListPreferences() });
+      return;
+    }
+    void navigate({ to });
+  };
 
   return (
     <Menu>

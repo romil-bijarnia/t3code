@@ -31,11 +31,7 @@ export function RenameDialog({
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
-    try {
-      await onSave(trimmed);
-    } finally {
-      setSaving(false);
-    }
+    await Promise.resolve(onSave(trimmed)).finally(() => setSaving(false));
     onClose();
   };
   return (
@@ -89,11 +85,7 @@ export function DeleteDialog({
   const [busy, setBusy] = useState(false);
   const confirm = async () => {
     setBusy(true);
-    try {
-      await onConfirm();
-    } finally {
-      setBusy(false);
-    }
+    await Promise.resolve(onConfirm()).finally(() => setBusy(false));
     onClose();
   };
   return (

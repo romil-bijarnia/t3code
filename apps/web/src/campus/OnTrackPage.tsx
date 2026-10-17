@@ -1,6 +1,6 @@
 import type { EnvironmentId, OnTrackTask, OnTrackUnit } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
-import { type KeyboardEvent, useMemo, useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { usePrimaryEnvironmentId } from "~/state/environments";
@@ -32,6 +32,16 @@ type View = { readonly kind: "home" } | { readonly kind: "unit"; readonly projec
 const NEEDS_YOU_PREVIEW = 6;
 const COMING_UP_DAYS = 14;
 
+function groupTasksByUnit(
+  tasks: ReadonlyArray<OnTrackTask>,
+): ReadonlyMap<number, ReadonlyArray<OnTrackTask>> {
+  const groups = new Map<number, OnTrackTask[]>();
+  for (const task of tasks) {
+    groups.set(task.projectId, [...(groups.get(task.projectId) ?? []), task]);
+  }
+  return new Map([...groups].map(([projectId, group]) => [projectId, sortTasks(group)]));
+}
+
 /**
  * OnTrack as a dashboard: a card per unit with its grade target and progress,
  * then the tasks that need the student, what is coming up, and what is
@@ -56,13 +66,7 @@ export function OnTrackPage({ app }: { readonly app: PinnedApp }) {
     (data?.meta.issue ? { reason: data.meta.issue, detail: data.meta.note ?? "" } : null);
   const [view, setView] = useState<View>({ kind: "home" });
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
-  const tasksByUnit = useMemo(() => {
-    const groups = new Map<number, OnTrackTask[]>();
-    for (const task of data?.tasks ?? []) {
-      groups.set(task.projectId, [...(groups.get(task.projectId) ?? []), task]);
-    }
-    return new Map([...groups].map(([projectId, tasks]) => [projectId, sortTasks(tasks)]));
-  }, [data?.tasks]);
+  const tasksByUnit = groupTasksByUnit(data?.tasks ?? []);
   const openTask = (task: OnTrackTask) => {
     setView({ kind: "unit", projectId: task.projectId });
     setOpenTaskId(task.taskId);

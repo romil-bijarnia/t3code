@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { SquarePenIcon } from "lucide-react";
-import { memo, useCallback } from "react";
+import { memo } from "react";
 
 import { isElectron } from "~/env";
 
@@ -27,7 +27,7 @@ export const SidebarPrimaryNav = memo(function SidebarPrimaryNav({
 
   // Goes straight to the new-chat screen in the project you are in. Its
   // heading is where you pick a different project.
-  const startNewChat = useCallback(() => {
+  const startNewChat = () => {
     if (isMobile) setOpenMobile(false);
     void startNewThreadFromContext({
       activeDraftThread,
@@ -35,27 +35,17 @@ export const SidebarPrimaryNav = memo(function SidebarPrimaryNav({
       defaultProjectRef,
       handleNewThread,
     });
-  }, [
-    activeDraftThread,
-    activeThread,
-    defaultProjectRef,
-    handleNewThread,
-    isMobile,
-    setOpenMobile,
-  ]);
+  };
 
-  const openApp = useCallback(
-    (app: PinnedApp) => {
-      if (isMobile) setOpenMobile(false);
-      // Only the desktop app can host the page; elsewhere it is a plain link.
-      if (!isElectron) {
-        window.open(app.url, "_blank", "noopener,noreferrer");
-        return;
-      }
-      void navigate({ to: "/apps/$appId", params: { appId: app.id } });
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  const openApp = (app: PinnedApp) => {
+    if (isMobile) setOpenMobile(false);
+    // Only the desktop app can host the page; elsewhere it is a plain link.
+    if (!isElectron) {
+      window.open(app.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    void navigate({ to: "/apps/$appId", params: { appId: app.id } });
+  };
 
   return (
     <SidebarMenu>

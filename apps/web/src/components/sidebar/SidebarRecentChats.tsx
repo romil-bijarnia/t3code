@@ -1,5 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { memo, useMemo, useState } from "react";
+import { memo, useState } from "react";
 
 import { useProjects, useThreadShells } from "../../state/entities";
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
@@ -20,14 +20,10 @@ export const SidebarRecentChats = memo(function SidebarRecentChats({
   const threads = useThreadShells();
   const projects = useProjects();
   const [shown, setShown] = useState(PAGE_SIZE);
-  const chats = useMemo(
-    () =>
-      threads
-        .filter((thread) => thread.archivedAt === null)
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, MAX_CHATS),
-    [threads],
-  );
+  const chats = threads
+    .filter((thread) => thread.archivedAt === null)
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, MAX_CHATS);
   if (chats.length === 0) return null;
   const visible = chats.slice(0, shown);
 

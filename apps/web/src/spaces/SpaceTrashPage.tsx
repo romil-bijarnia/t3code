@@ -1,7 +1,7 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useNavigate } from "@tanstack/react-router";
 import { FileTextIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { isElectron } from "~/env";
 
@@ -32,10 +32,7 @@ export function SpaceTrashPage() {
   const navigate = useNavigate();
   const { deleteSpaceForever, restoreSpace } = useSpaceActions();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const liveFolders = useMemo(
-    () => new Set(spaces.map((space) => spaceFolderName(space.workspaceRoot))),
-    [spaces],
-  );
+  const liveFolders = new Set(spaces.map((space) => spaceFolderName(space.workspaceRoot)));
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
@@ -127,14 +124,10 @@ function TrashedPages({ space }: { readonly space: EnvironmentProject }) {
     space.workspaceRoot,
     SPACE_TRASH_DIR,
   );
-  const stamps = useMemo(
-    () =>
-      (data?.entries ?? [])
-        .filter((entry) => entry.kind === "directory")
-        .map((entry) => entry.path)
-        .toSorted((left, right) => right.localeCompare(left)),
-    [data],
-  );
+  const stamps = (data?.entries ?? [])
+    .filter((entry) => entry.kind === "directory")
+    .map((entry) => entry.path)
+    .toSorted((left, right) => right.localeCompare(left));
   if (stamps.length === 0) return null;
   return (
     <ul className="flex flex-col gap-2">
@@ -160,16 +153,11 @@ function TrashedStamp({
   );
   const { restorePage } = useSpaceActions();
   const navigate = useNavigate();
-  const pages = useMemo(
-    () =>
-      (data?.entries ?? []).filter(
-        (entry) => entry.kind === "file" && isPagePath(entry.path) && isVisibleEntry(entry.path),
-      ),
-    [data],
+  const pages = (data?.entries ?? []).filter(
+    (entry) => entry.kind === "file" && isPagePath(entry.path) && isVisibleEntry(entry.path),
   );
-  const takenTitles = useMemo(
-    () => new Set(pagesFromEntries(livePages.data?.entries ?? []).map((page) => page.title)),
-    [livePages.data],
+  const takenTitles = new Set(
+    pagesFromEntries(livePages.data?.entries ?? []).map((page) => page.title),
   );
   if (pages.length === 0) return null;
   return (

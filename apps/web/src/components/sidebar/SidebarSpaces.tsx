@@ -3,7 +3,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon, FileTextIcon, PlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -70,36 +70,32 @@ export const SidebarSpaces = memo(function SidebarSpaces() {
   const [pending, setPending] = useState<PendingDialog | null>(null);
   const pathname = useLocation({ select: (location) => location.pathname });
   const search = useLocation({ select: (location) => location.search });
-  const active = useMemo<ActiveSpaceLocation | null>(() => {
-    if (!pathname.startsWith("/spaces/")) return null;
-    const page = (search as { page?: unknown }).page;
-    return {
-      spaceId: decodeURIComponent(pathname.slice("/spaces/".length)),
-      page: typeof page === "string" ? page : null,
-    };
-  }, [pathname, search]);
+  const activePage = (search as { page?: unknown }).page;
+  const active: ActiveSpaceLocation | null = pathname.startsWith("/spaces/")
+    ? {
+        spaceId: decodeURIComponent(pathname.slice("/spaces/".length)),
+        page: typeof activePage === "string" ? activePage : null,
+      }
+    : null;
 
-  const openDialog = useCallback(() => {
+  const openDialog = () => {
     setDialogKey((key) => key + 1);
     setDialogOpen(true);
-  }, []);
+  };
 
-  const openSpace = useCallback(
-    (spaceId: string, page?: string) => {
-      if (isMobile) setOpenMobile(false);
-      void navigate({
-        to: "/spaces/$spaceId",
-        params: { spaceId },
-        search: page ? { page } : {},
-      });
-    },
-    [isMobile, navigate, setOpenMobile],
-  );
+  const openSpace = (spaceId: string, page?: string) => {
+    if (isMobile) setOpenMobile(false);
+    void navigate({
+      to: "/spaces/$spaceId",
+      params: { spaceId },
+      search: page ? { page } : {},
+    });
+  };
 
-  const openTrash = useCallback(() => {
+  const openTrash = () => {
     if (isMobile) setOpenMobile(false);
     void navigate({ to: "/spaces/trash" });
-  }, [isMobile, navigate, setOpenMobile]);
+  };
 
   return (
     <SidebarGroup>
@@ -315,7 +311,7 @@ function usePages(space: EnvironmentProject, parentPath: string): ReadonlyArray<
     space.workspaceRoot,
     pageChildrenDir(parentPath),
   );
-  return useMemo(() => pagesFromEntries(data?.entries ?? []), [data]);
+  return pagesFromEntries(data?.entries ?? []);
 }
 
 function PageTree({

@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
  * Which Spaces and pages are unfolded in the sidebar. Remembered per browser
@@ -51,6 +51,6 @@ export function useSpaceTreeExpanded(
     () => state[key] ?? fallback,
     () => fallback,
   );
-  const set = useCallback((next: boolean) => setSpaceTreeExpanded(key, next), [key]);
+  const set = (next: boolean) => setSpaceTreeExpanded(key, next);
   return [expanded, set];
 }

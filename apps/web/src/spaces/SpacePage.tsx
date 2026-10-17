@@ -13,7 +13,7 @@ import {
   UploadIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
@@ -84,7 +84,7 @@ export function SpacePage({
     space?.workspaceRoot ?? "",
     pageChildrenDir(pagePath),
   );
-  const childPages = useMemo(() => pagesFromEntries(children.data?.entries ?? []), [children.data]);
+  const childPages = pagesFromEntries(children.data?.entries ?? []);
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
   // Set right before navigating so the next page lands with the cursor in place:
   // the title for a page that was just made, the body after a rename.
@@ -93,15 +93,12 @@ export function SpacePage({
     focus: "title" | "editor";
   } | null>(null);
 
-  const go = useCallback(
-    (next?: string) =>
-      void navigate({
-        to: "/spaces/$spaceId",
-        params: { spaceId },
-        search: next ? { page: next } : {},
-      }),
-    [navigate, spaceId],
-  );
+  const go = (next?: string) =>
+    void navigate({
+      to: "/spaces/$spaceId",
+      params: { spaceId },
+      search: next ? { page: next } : {},
+    });
 
   const addPage = async () => {
     if (!space) return;
@@ -444,18 +441,14 @@ function SpaceChats({ space }: { readonly space: EnvironmentProject }) {
   const navigate = useNavigate();
   const handleNewThread = useNewThreadHandler();
   const threads = useThreadShells();
-  const chats = useMemo(
-    () =>
-      threads
-        .filter(
-          (thread) =>
-            thread.environmentId === space.environmentId &&
-            thread.projectId === space.id &&
-            thread.archivedAt === null,
-        )
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    [space.environmentId, space.id, threads],
-  );
+  const chats = threads
+    .filter(
+      (thread) =>
+        thread.environmentId === space.environmentId &&
+        thread.projectId === space.id &&
+        thread.archivedAt === null,
+    )
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   return (
     <section className="mt-8 flex flex-col gap-1 select-none" aria-label="Chats">
       <h2 className="text-sm font-medium text-muted-foreground">Chats</h2>
@@ -501,40 +494,31 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(0);
-  const files = useMemo(
-    () =>
-      (data?.entries ?? [])
-        .filter((entry) => isVisibleEntry(entry.path))
-        .map((entry) => entry.path)
-        .toSorted((left, right) => entryName(left).localeCompare(entryName(right))),
-    [data],
-  );
+  const files = (data?.entries ?? [])
+    .filter((entry) => isVisibleEntry(entry.path))
+    .map((entry) => entry.path)
+    .toSorted((left, right) => entryName(left).localeCompare(entryName(right)));
+
+  const addFile = async (item: File, taken: Set<string>) => {
+    if (item.size > MAX_UPLOAD_BYTES) {
+      toastManager.add({
+        type: "error",
+        title: `${item.name} is too large`,
+        description: "Files up to 25 MB can be added here. Use Show in Finder for bigger ones.",
+      });
+      return;
+    }
+    const name = uniqueFileName(item.name, taken);
+    taken.add(name);
+    await writeSpaceFile(space, `${SPACE_FILES_DIR}/${name}`, await readAsBase64(item), "base64");
+  };
 
   const addFiles = async (list: FileList | null) => {
     if (!list || list.length === 0 || !canWrite) return;
     const taken = new Set(files.map(entryName));
     setUploading((count) => count + list.length);
     for (const item of Array.from(list)) {
-      try {
-        if (item.size > MAX_UPLOAD_BYTES) {
-          toastManager.add({
-            type: "error",
-            title: `${item.name} is too large`,
-            description: "Files up to 25 MB can be added here. Use Show in Finder for bigger ones.",
-          });
-          continue;
-        }
-        const name = uniqueFileName(item.name, taken);
-        taken.add(name);
-        await writeSpaceFile(
-          space,
-          `${SPACE_FILES_DIR}/${name}`,
-          await readAsBase64(item),
-          "base64",
-        );
-      } finally {
-        setUploading((count) => count - 1);
-      }
+      await addFile(item, taken).finally(() => setUploading((count) => count - 1));
     }
     refresh();
   };
@@ -608,20 +592,17 @@ function SpaceFiles({ space }: { readonly space: EnvironmentProject }) {
 
 function useOpenPath(space: EnvironmentProject | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
-  return useCallback(
-    (path: string) => {
-      if (!space) return;
-      void openInEditor({
-        environmentId: space.environmentId,
-        input: { cwd: path, editor: "file-manager" },
-      }).then((result) => {
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          toastManager.add({ type: "error", title: "Could not open it", description: path });
-        }
-      });
-    },
-    [openInEditor, space],
-  );
+  return (path: string) => {
+    if (!space) return;
+    void openInEditor({
+      environmentId: space.environmentId,
+      input: { cwd: path, editor: "file-manager" },
+    }).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        toastManager.add({ type: "error", title: "Could not open it", description: path });
+      }
+    });
+  };
 }
 
 function Row({

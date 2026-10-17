@@ -26,11 +26,9 @@ import {
 import type { ComponentType, ReactNode } from "react";
 import {
   forwardRef,
-  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -280,38 +278,34 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
   const [, setTick] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const commands = useMemo<ReadonlyArray<SlashCommand>>(
-    () =>
-      onCreateSubpage
-        ? [
-            ...SLASH_COMMANDS,
-            {
-              id: "page",
-              section: "Create",
-              label: "Page",
-              description: "Create a page inside this one",
-              icon: FilePlusIcon,
-              run: (editor, range) => {
-                editor.chain().focus().deleteRange(range).run();
-                onCreateSubpage();
-              },
-            },
-          ]
-        : SLASH_COMMANDS,
-    [onCreateSubpage],
-  );
+  const commands: ReadonlyArray<SlashCommand> = onCreateSubpage
+    ? [
+        ...SLASH_COMMANDS,
+        {
+          id: "page",
+          section: "Create",
+          label: "Page",
+          description: "Create a page inside this one",
+          icon: FilePlusIcon,
+          run: (editor, range) => {
+            editor.chain().focus().deleteRange(range).run();
+            onCreateSubpage();
+          },
+        },
+      ]
+    : SLASH_COMMANDS;
 
-  const visibleCommands = useMemo(() => {
-    if (!slash) return [];
-    const query = slash.query.toLowerCase();
-    return commands.filter((command) => command.label.toLowerCase().includes(query));
-  }, [commands, slash]);
+  const slashQuery = slash?.query.toLowerCase();
+  const visibleCommands =
+    slashQuery === undefined
+      ? []
+      : commands.filter((command) => command.label.toLowerCase().includes(slashQuery));
   const visibleRef = useRef(visibleCommands);
   useLayoutEffect(() => {
     visibleRef.current = visibleCommands;
   });
 
-  const flush = useCallback((editor: Editor) => {
+  const flush = (editor: Editor) => {
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -320,42 +314,41 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
     if (next === lastMarkdownRef.current) return;
     lastMarkdownRef.current = next;
     onChangeRef.current(next);
-  }, []);
+  };
 
-  const SlashKeys = useMemo(
-    () =>
-      Extension.create({
-        name: "spaceSlashKeys",
-        addKeyboardShortcuts() {
-          const move = (delta: number) => () => {
-            if (!slashRef.current) return false;
-            const count = visibleRef.current.length;
-            if (count === 0) return false;
-            const next = (slashIndexRef.current + delta + count) % count;
-            slashIndexRef.current = next;
-            setSlashIndex(next);
+  // useEditor rebuilds the editor whenever this changes, so it is made once.
+  const [SlashKeys] = useState(() =>
+    Extension.create({
+      name: "spaceSlashKeys",
+      addKeyboardShortcuts() {
+        const move = (delta: number) => () => {
+          if (!slashRef.current) return false;
+          const count = visibleRef.current.length;
+          if (count === 0) return false;
+          const next = (slashIndexRef.current + delta + count) % count;
+          slashIndexRef.current = next;
+          setSlashIndex(next);
+          return true;
+        };
+        return {
+          ArrowDown: move(1),
+          ArrowUp: move(-1),
+          Enter: ({ editor: current }) => {
+            const state = slashRef.current;
+            const command = visibleRef.current[slashIndexRef.current];
+            if (!state || !command) return false;
+            command.run(current, { from: state.from, to: state.to });
             return true;
-          };
-          return {
-            ArrowDown: move(1),
-            ArrowUp: move(-1),
-            Enter: () => {
-              const state = slashRef.current;
-              const command = visibleRef.current[slashIndexRef.current];
-              if (!state || !command) return false;
-              command.run(this.editor, { from: state.from, to: state.to });
-              return true;
-            },
-            Escape: () => {
-              if (!slashRef.current) return false;
-              slashRef.current = null;
-              setSlash(null);
-              return true;
-            },
-          };
-        },
-      }),
-    [],
+          },
+          Escape: () => {
+            if (!slashRef.current) return false;
+            slashRef.current = null;
+            setSlash(null);
+            return true;
+          },
+        };
+      },
+    }),
   );
 
   const editor = useEditor(
@@ -430,14 +423,11 @@ export const PageEditor = forwardRef<PageEditorHandle, PageEditorProps>(function
     [editor],
   );
 
-  const runCommand = useCallback(
-    (command: SlashCommand) => {
-      const state = slashRef.current;
-      if (!editor || !state) return;
-      command.run(editor, { from: state.from, to: state.to });
-    },
-    [editor],
-  );
+  const runCommand = (command: SlashCommand) => {
+    const state = slashRef.current;
+    if (!editor || !state) return;
+    command.run(editor, { from: state.from, to: state.to });
+  };
 
   return (
     <div ref={containerRef} className={cn("relative", className)}>
@@ -515,18 +505,15 @@ function SlashMenu({
     menu.style.visibility = "visible";
   }, [anchor, container, editor]);
 
-  const sections = useMemo(() => {
-    const groups: Array<{
-      section: SlashCommand["section"];
-      items: Array<{ command: SlashCommand; index: number }>;
-    }> = [];
-    commands.forEach((command, index) => {
-      const last = groups.at(-1);
-      if (last && last.section === command.section) last.items.push({ command, index });
-      else groups.push({ section: command.section, items: [{ command, index }] });
-    });
-    return groups;
-  }, [commands]);
+  const sections: Array<{
+    section: SlashCommand["section"];
+    items: Array<{ command: SlashCommand; index: number }>;
+  }> = [];
+  commands.forEach((command, index) => {
+    const last = sections.at(-1);
+    if (last && last.section === command.section) last.items.push({ command, index });
+    else sections.push({ section: command.section, items: [{ command, index }] });
+  });
 
   return (
     <div

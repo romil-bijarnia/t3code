@@ -6,7 +6,7 @@ import {
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useRouter } from "@tanstack/react-router";
 import { EllipsisIcon } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useState } from "react";
 
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -38,12 +38,8 @@ export const SidebarPinnedThreads = memo(function SidebarPinnedThreads({
 }) {
   const threads = useThreadShells();
   const projects = useProjects();
-  const pinnedThreads = useMemo(
-    () =>
-      sortPinnedThreadsByOrderKey(
-        threads.filter((thread) => thread.pinnedAt !== null && thread.archivedAt === null),
-      ),
-    [threads],
+  const pinnedThreads = sortPinnedThreadsByOrderKey(
+    threads.filter((thread) => thread.pinnedAt !== null && thread.archivedAt === null),
   );
   if (pinnedThreads.length === 0) return null;
 
@@ -85,16 +81,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
 }) {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
-  const threadRef = useMemo(
-    () => scopeThreadRef(thread.environmentId, thread.id),
-    [thread.environmentId, thread.id],
-  );
+  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   // Null while not renaming; otherwise the title being edited in place.
   const [renamingTitle, setRenamingTitle] = useState<string | null>(null);
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const startRename = useCallback(() => setRenamingTitle(thread.title), [thread.title]);
+  const startRename = () => setRenamingTitle(thread.title);
   const { openMenu } = useThreadActionMenu({ threadRef, projectCwd, onStartRename: startRename });
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -106,15 +99,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
     },
   });
 
-  const openThread = useCallback(() => {
+  const openThread = () => {
     if (isMobile) setOpenMobile(false);
     void router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
     });
-  }, [isMobile, router, setOpenMobile, threadRef]);
+  };
 
-  const commitRename = useCallback(async () => {
+  const commitRename = async () => {
     const title = renamingTitle?.trim() ?? "";
     setRenamingTitle(null);
     if (title.length === 0 || title === thread.title) return;
@@ -132,7 +125,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow({
         }),
       );
     }
-  }, [renamingTitle, thread.title, threadRef, updateThreadMetadata]);
+  };
 
   if (renamingTitle !== null) {
     return (
