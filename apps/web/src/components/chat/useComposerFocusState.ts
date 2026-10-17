@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export function useComposerFocusState() {
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -7,15 +7,15 @@ export function useComposerFocusState() {
   // calls that change nothing keeps a send (which resets the editor inside a
   // commit) from feeding React an endless chain of no-op updates.
   const scrollCollapsedRef = useRef(false);
-  const setIsComposerScrollCollapsed = useCallback((collapsed: boolean) => {
+  const setIsComposerScrollCollapsed = (collapsed: boolean) => {
     if (scrollCollapsedRef.current === collapsed) return;
     scrollCollapsedRef.current = collapsed;
     setScrollCollapsedState(collapsed);
-  }, []);
+  };
 
-  const restoreAfterTimelineReachedEnd = useCallback(() => {
+  const restoreAfterTimelineReachedEnd = () => {
     setIsComposerScrollCollapsed(false);
-  }, [setIsComposerScrollCollapsed]);
+  };
 
   return {
     isComposerFocused,

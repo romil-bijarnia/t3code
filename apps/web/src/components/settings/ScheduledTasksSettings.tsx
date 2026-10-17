@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   Clock3Icon,
   CopyIcon,
@@ -14,15 +14,7 @@ import {
   SearchIcon,
   Trash2Icon,
 } from "lucide-react";
-import {
-  type KeyboardEvent,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -68,6 +60,7 @@ import {
   type EnvironmentPresentation,
 } from "../../state/environments";
 import { useProjects } from "../../state/entities";
+import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -404,9 +397,9 @@ export function ScheduledTasksSettings(target: {
   } | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
-  const openForEdit = useCallback((environmentId: EnvironmentId, task: ScheduledTask) => {
+  const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
-  }, []);
+  };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
@@ -524,6 +517,10 @@ export function ScheduledTasksSettings(target: {
   );
 }
 
+const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
+  serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
+);
+
 function ScheduledTaskEnvironmentList({
   environmentId,
   taskId,
@@ -538,35 +535,25 @@ function ScheduledTaskEnvironmentList({
   readonly status: StatusFilter;
 }) {
   const { scope, environments } = useSettingsScope();
-  const states = useAtomValue(
-    useMemo(
-      () =>
-        Atom.make((get) =>
-          environments.map((environment) => {
-            const connected =
-              environment.connection.phase === "connected" && environment.serverConfig !== null;
-            const query = connected
-              ? get(
-                  serverEnvironment.scheduledTasksLive({
-                    environmentId: environment.environmentId,
-                    input: {},
-                  }),
-                )
-              : null;
-            const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
-            return {
-              environment,
-              connected,
-              tasks: data?.tasks.filter((task) =>
-                matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
-              ),
-              error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
-            };
-          }),
-        ),
-      [environments, scope],
-    ),
+  const connectedIds = environments.flatMap((environment) =>
+    environment.connection.phase === "connected" && environment.serverConfig !== null
+      ? [environment.environmentId]
+      : [],
   );
+  const queries = useAtomValue(scheduledTasksListAtom(environmentIdsKey(connectedIds)));
+  const states = environments.map((environment) => {
+    const index = connectedIds.indexOf(environment.environmentId);
+    const query = index < 0 ? null : queries[index]!;
+    const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
+    return {
+      environment,
+      connected: index >= 0,
+      tasks: data?.tasks.filter((task) =>
+        matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
+      ),
+      error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
+    };
+  });
   const linkedState = states.find((state) => state.environment.environmentId === environmentId);
   const linkedTask = linkedState?.tasks?.find((task) => task.id === taskId);
   const openedLink = useRef(false);
@@ -1241,6 +1228,44 @@ function ScheduledTaskEditorDialog({
   readonly seed?: Partial<DraftState> | undefined;
   readonly onClose: () => void;
 }) {
+  const [saving, setSaving] = useState(false);
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !saving) onClose();
+      }}
+    >
+      {/* The form owns the draft so a keystroke re-renders it, not the dialog chrome. */}
+      <DialogPopup className="max-w-xl">
+        <ScheduledTaskEditorForm
+          initialEnvironmentId={initialEnvironmentId}
+          task={task}
+          seed={seed}
+          saving={saving}
+          onSavingChange={setSaving}
+          onClose={onClose}
+        />
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+function ScheduledTaskEditorForm({
+  initialEnvironmentId,
+  task,
+  seed,
+  saving,
+  onSavingChange: setSaving,
+  onClose,
+}: {
+  readonly initialEnvironmentId: EnvironmentId;
+  readonly task: ScheduledTask | null;
+  readonly seed: Partial<DraftState> | undefined;
+  readonly saving: boolean;
+  readonly onSavingChange: (saving: boolean) => void;
+  readonly onClose: () => void;
+}) {
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
@@ -1250,14 +1275,10 @@ function ScheduledTaskEditorDialog({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  const projects = useMemo(
-    () =>
-      allProjects.filter(
-        (project) =>
-          project.environmentId === environmentId &&
-          matchesScheduledTaskScope(scope, environmentId, project.id),
-      ),
-    [allProjects, environmentId, scope],
+  const projects = allProjects.filter(
+    (project) =>
+      project.environmentId === environmentId &&
+      matchesScheduledTaskScope(scope, environmentId, project.id),
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
@@ -1292,7 +1313,6 @@ function ScheduledTaskEditorDialog({
       };
     });
   };
-  const [saving, setSaving] = useState(false);
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1303,16 +1323,12 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(
-          deriveProviderInstanceEntries(providers),
-          settings,
-          selectedProject?.id ?? null,
-        ),
-      ),
-    [providers, settings, selectedProject?.id],
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providers),
+      settings,
+      selectedProject?.id ?? null,
+    ),
   );
 
   const firstInstance = instanceEntries[0];
@@ -1325,9 +1341,11 @@ function ScheduledTaskEditorDialog({
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
-  const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, providers, activeInstanceId, activeModel),
-    [settings, providers, activeInstanceId, activeModel],
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    providers,
+    activeInstanceId,
+    activeModel,
   );
 
   const reportFailure = (title: string, error: unknown) => {
@@ -1435,459 +1453,450 @@ function ScheduledTaskEditorDialog({
   };
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !saving) onClose();
-      }}
-    >
-      <DialogPopup className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>
-            {draft.editingId ? "Edit scheduled task" : "New scheduled task"}
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <DialogHeader>
+        <DialogTitle>{draft.editingId ? "Edit scheduled task" : "New scheduled task"}</DialogTitle>
+      </DialogHeader>
 
-        <DialogPanel>
-          <fieldset disabled={saving} className="space-y-6">
-            {!connected ? (
-              <p className="text-sm text-destructive">Reconnect this environment before saving.</p>
-            ) : null}
-            {tasksQuery.error ? (
-              <p className="text-sm text-destructive" role="status">
-                {tasksQuery.error}
-              </p>
-            ) : null}
-            {editingTaskMissing ? (
-              <p className="text-sm text-destructive" role="status">
-                This scheduled task no longer exists.
-              </p>
-            ) : null}
+      <DialogPanel>
+        <fieldset disabled={saving} className="space-y-6">
+          {!connected ? (
+            <p className="text-sm text-destructive">Reconnect this environment before saving.</p>
+          ) : null}
+          {tasksQuery.error ? (
+            <p className="text-sm text-destructive" role="status">
+              {tasksQuery.error}
+            </p>
+          ) : null}
+          {editingTaskMissing ? (
+            <p className="text-sm text-destructive" role="status">
+              This scheduled task no longer exists.
+            </p>
+          ) : null}
 
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <Label htmlFor="scheduled-task-title">Name</Label>
-                <input
-                  id="scheduled-task-title"
-                  className="m-0 w-full min-w-0 appearance-none bg-transparent p-0 text-lg leading-tight text-foreground outline-none placeholder:text-placeholder"
-                  placeholder="Scheduled task title"
-                  value={draft.title}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, title: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="scheduled-task-prompt">Prompt</Label>
-                <textarea
-                  id="scheduled-task-prompt"
-                  rows={3}
-                  className="field-sizing-content m-0 max-h-64 w-full min-w-0 resize-none bg-transparent p-0 text-base text-foreground outline-none placeholder:text-placeholder"
-                  placeholder="Describe what the agent should do"
-                  value={draft.prompt}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, prompt: event.target.value }))
-                  }
-                />
-              </div>
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <Label htmlFor="scheduled-task-title">Name</Label>
+              <input
+                id="scheduled-task-title"
+                className="m-0 w-full min-w-0 appearance-none bg-transparent p-0 text-lg leading-tight text-foreground outline-none placeholder:text-placeholder"
+                placeholder="Scheduled task title"
+                value={draft.title}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, title: event.target.value }))
+                }
+              />
             </div>
+            <div className="space-y-1">
+              <Label htmlFor="scheduled-task-prompt">Prompt</Label>
+              <textarea
+                id="scheduled-task-prompt"
+                rows={3}
+                className="field-sizing-content m-0 max-h-64 w-full min-w-0 resize-none bg-transparent p-0 text-base text-foreground outline-none placeholder:text-placeholder"
+                placeholder="Describe what the agent should do"
+                value={draft.prompt}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, prompt: event.target.value }))
+                }
+              />
+            </div>
+          </div>
 
-            {task?.schedule.type === "interval" &&
-            task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS ? (
-              <p className="text-sm text-muted-foreground" role="status">
-                This task uses a legacy interval below one minute. Saving updates it to at least one
-                minute.
-              </p>
-            ) : null}
+          {task?.schedule.type === "interval" &&
+          task.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              This task uses a legacy interval below one minute. Saving updates it to at least one
+              minute.
+            </p>
+          ) : null}
 
-            <FormList title="Frequency">
-              <FormRow label="Repeat schedule" htmlFor="scheduled-task-repeat">
-                <Select
-                  value={repeat}
-                  onValueChange={(value) => {
-                    if (isRepeatMode(value)) setRepeat(value);
-                  }}
-                >
-                  <SelectTrigger id="scheduled-task-repeat" size="sm" variant="ghost">
-                    <SelectValue>{REPEAT_LABELS[repeat]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {REPEAT_MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {REPEAT_LABELS[mode]}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
+          <FormList title="Frequency">
+            <FormRow label="Repeat schedule" htmlFor="scheduled-task-repeat">
+              <Select
+                value={repeat}
+                onValueChange={(value) => {
+                  if (isRepeatMode(value)) setRepeat(value);
+                }}
+              >
+                <SelectTrigger id="scheduled-task-repeat" size="sm" variant="ghost">
+                  <SelectValue>{REPEAT_LABELS[repeat]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {REPEAT_MODES.map((mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {REPEAT_LABELS[mode]}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </FormRow>
+            {draft.scheduleMode === "fixed" ? (
+              <FormRow label="Time" htmlFor="scheduled-task-time">
+                <Input
+                  type="time"
+                  id="scheduled-task-time"
+                  nativeInput
+                  size="sm"
+                  className="w-28"
+                  value={draft.timeOfDay}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
+                  }
+                />
               </FormRow>
-              {draft.scheduleMode === "fixed" ? (
-                <FormRow label="Time" htmlFor="scheduled-task-time">
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    size="sm"
-                    className="w-28"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
-                </FormRow>
-              ) : null}
-              {repeat === "custom" ? (
-                <FormRow label="On">
-                  <ToggleGroup
-                    multiple
-                    variant="outline"
-                    size="sm"
-                    aria-label="Days of the week"
-                    value={[...draft.weekdays].map(String)}
-                    onValueChange={(values) => {
-                      if (values.length === 0) return;
-                      setDraft((current) => ({
-                        ...current,
-                        weekdays: new Set(values.map(Number)),
-                      }));
-                    }}
-                  >
-                    {WEEKDAY_ORDER.map((day) => (
-                      <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                        {WEEKDAY_SHORT[day]}
-                      </Toggle>
-                    ))}
-                  </ToggleGroup>
-                </FormRow>
-              ) : null}
-              {draft.scheduleMode === "interval" ? (
-                <FormRow label="Every" htmlFor="scheduled-task-interval">
-                  <Input
-                    type="number"
-                    id="scheduled-task-interval"
-                    nativeInput
-                    size="sm"
-                    min={1}
-                    step="any"
-                    className="w-20"
-                    value={draft.intervalMinutes}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
-                    }
-                  />
-                  <span className="text-sm text-muted-foreground">minutes</span>
-                </FormRow>
-              ) : null}
-              {draft.scheduleMode === "webhook" ? (
-                <>
-                  <FormRow
-                    stacked
-                    label="Webhook URL"
-                    description={
-                      "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
-                    }
-                  >
-                    <WebhookEndpointField environmentId={environmentId} task={liveTask} />
-                  </FormRow>
-                  <FormRow
-                    label="Skip requests older than"
-                    description="Minutes, optional"
-                    htmlFor="scheduled-task-max-age"
-                  >
-                    <Input
-                      id="scheduled-task-max-age"
-                      type="number"
-                      nativeInput
-                      size="sm"
-                      min={1}
-                      max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
-                      className="w-28"
-                      placeholder="Any age"
-                      value={draft.maxDeliveryAgeMinutes}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          maxDeliveryAgeMinutes: event.target.value,
-                        }))
-                      }
-                    />
-                  </FormRow>
-                  <FormRow
-                    label="Require signature"
-                    description="Reject requests without a valid HMAC-SHA256 signature of the body."
-                    htmlFor="scheduled-task-signature"
-                  >
-                    <Switch
-                      id="scheduled-task-signature"
-                      checked={draft.signatureEnabled}
-                      onCheckedChange={(signatureEnabled) =>
-                        setDraft((current) => ({ ...current, signatureEnabled }))
-                      }
-                    />
-                  </FormRow>
-                  {draft.signatureEnabled ? (
-                    <FormRow stacked label="Signature">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <Field label="Header" htmlFor="scheduled-task-signature-header">
-                          <Input
-                            id="scheduled-task-signature-header"
-                            size="sm"
-                            value={draft.signatureHeader}
-                            onChange={(event) =>
-                              setDraft((current) => ({
-                                ...current,
-                                signatureHeader: event.target.value,
-                              }))
-                            }
-                          />
-                        </Field>
-                        <Field label="Prefix" htmlFor="scheduled-task-signature-prefix">
-                          <Input
-                            id="scheduled-task-signature-prefix"
-                            size="sm"
-                            value={draft.signaturePrefix}
-                            placeholder="None"
-                            onChange={(event) =>
-                              setDraft((current) => ({
-                                ...current,
-                                signaturePrefix: event.target.value,
-                              }))
-                            }
-                          />
-                        </Field>
-                        <Field label="Encoding" htmlFor="scheduled-task-signature-encoding">
-                          <Select
-                            value={draft.signatureEncoding}
-                            onValueChange={(value) =>
-                              setDraft((current) => ({
-                                ...current,
-                                signatureEncoding: value === "base64" ? "base64" : "hex",
-                              }))
-                            }
-                          >
-                            <SelectTrigger size="sm" id="scheduled-task-signature-encoding">
-                              <SelectValue>{draft.signatureEncoding}</SelectValue>
-                            </SelectTrigger>
-                            <SelectPopup>
-                              <SelectItem value="hex">hex</SelectItem>
-                              <SelectItem value="base64">base64</SelectItem>
-                            </SelectPopup>
-                          </Select>
-                        </Field>
-                        <Field label="Secret" htmlFor="scheduled-task-signature-secret">
-                          <Input
-                            id="scheduled-task-signature-secret"
-                            size="sm"
-                            type="password"
-                            autoComplete="off"
-                            value={draft.signatureSecret}
-                            placeholder={
-                              liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret
-                                ? "Unchanged"
-                                : "Shared secret"
-                            }
-                            onChange={(event) =>
-                              setDraft((current) => ({
-                                ...current,
-                                signatureSecret: event.target.value,
-                              }))
-                            }
-                          />
-                        </Field>
-                      </div>
-                    </FormRow>
-                  ) : null}
-                </>
-              ) : null}
-            </FormList>
-
-            <FormList title="Details">
-              <FormRow label="Runs on" htmlFor="scheduled-task-environment">
-                <Select
-                  value={environmentId}
-                  disabled={task !== null || saving}
-                  onValueChange={(id) => {
-                    const next = connectedEnvironments.find((entry) => entry.environmentId === id);
-                    if (!next) return;
-                    setEnvironmentId(next.environmentId);
+            ) : null}
+            {repeat === "custom" ? (
+              <FormRow label="On">
+                <ToggleGroup
+                  multiple
+                  variant="outline"
+                  size="sm"
+                  aria-label="Days of the week"
+                  value={[...draft.weekdays].map(String)}
+                  onValueChange={(values) => {
+                    if (values.length === 0) return;
                     setDraft((current) => ({
                       ...current,
-                      projectId: "",
-                      modelKey: "",
-                      baseModelSelection: null,
-                      baseRef: "main",
-                      startFromOrigin: true,
-                      existingWorktreePath: "",
+                      weekdays: new Set(values.map(Number)),
                     }));
                   }}
                 >
-                  <SelectTrigger id="scheduled-task-environment" size="sm" variant="ghost">
-                    <SelectValue>
-                      <span className="flex items-center gap-2">
-                        <EnvironmentMachineIcon
-                          kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
-                          className="size-4"
-                        />
-                        {environment?.label ?? "Unavailable environment"}
-                      </span>
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {connectedEnvironments.map((entry) => {
-                      const { secondary } = settingsScopeEnvironmentLabels(
-                        entry,
-                        connectedEnvironments,
-                      );
-                      return (
-                        <SelectItem
-                          key={entry.environmentId}
-                          value={entry.environmentId}
-                          label={entry.label}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            <EnvironmentMachineIcon
-                              kind={resolveEnvironmentMachineKind(entry.serverConfig)}
-                              className="size-4"
-                            />
-                            <span className="min-w-0">
-                              <span className="block truncate">{entry.label}</span>
-                              {secondary ? (
-                                <span className="block max-w-72 truncate text-xs text-muted-foreground">
-                                  {secondary}
-                                </span>
-                              ) : null}
-                            </span>
-                          </span>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectPopup>
-                </Select>
+                  {WEEKDAY_ORDER.map((day) => (
+                    <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+                      {WEEKDAY_SHORT[day]}
+                    </Toggle>
+                  ))}
+                </ToggleGroup>
               </FormRow>
-              <FormRow label="Project" htmlFor="scheduled-task-project">
-                <Select
-                  value={selectedProjectId}
-                  onValueChange={(projectId) =>
-                    setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+            ) : null}
+            {draft.scheduleMode === "interval" ? (
+              <FormRow label="Every" htmlFor="scheduled-task-interval">
+                <Input
+                  type="number"
+                  id="scheduled-task-interval"
+                  nativeInput
+                  size="sm"
+                  min={1}
+                  step="any"
+                  className="w-20"
+                  value={draft.intervalMinutes}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
+                  }
+                />
+                <span className="text-sm text-muted-foreground">minutes</span>
+              </FormRow>
+            ) : null}
+            {draft.scheduleMode === "webhook" ? (
+              <>
+                <FormRow
+                  stacked
+                  label="Webhook URL"
+                  description={
+                    "Each request runs the prompt. Use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} or {{request}} in the prompt; only what it names reaches the agent."
                   }
                 >
-                  <SelectTrigger size="sm" variant="ghost" id="scheduled-task-project">
-                    <SelectValue placeholder="Select project">{selectedProject?.title}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup>
-                    {projects.map((project) => (
-                      <SelectItem key={project.id} value={project.id} label={project.title}>
-                        <span className="block truncate">{project.title}</span>
-                        {allProjects.some(
-                          (other) =>
-                            other.title === project.title &&
-                            (other.environmentId !== project.environmentId ||
-                              other.id !== project.id),
-                        ) ? (
-                          <span className="block max-w-72 truncate text-xs text-muted-foreground">
-                            {project.workspaceRoot}
-                          </span>
-                        ) : null}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </FormRow>
-              <FormRow label="Workspace" htmlFor="scheduled-task-workspace">
-                <Select
-                  value={draft.workspaceMode}
-                  onValueChange={(value) =>
-                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                  }
-                >
-                  <SelectTrigger size="sm" variant="ghost" id="scheduled-task-workspace">
-                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup>
-                    <SelectItem value="worktree">Create a new worktree</SelectItem>
-                    <SelectItem value="root">Use the project checkout</SelectItem>
-                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                  </SelectPopup>
-                </Select>
-              </FormRow>
-              {draft.workspaceMode === "worktree" ? (
-                <FormRow stacked label="Base branch" htmlFor="scheduled-task-base-ref">
-                  <WorktreeBaseBranchPicker
-                    key={`${environmentId}:${selectedProjectId}`}
-                    id="scheduled-task-base-ref"
-                    environmentId={environmentId}
-                    cwd={selectedProject?.workspaceRoot ?? null}
-                    value={draft.baseRef}
-                    onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
-                    startFromOrigin={draft.startFromOrigin}
-                    onStartFromOriginChange={(startFromOrigin) =>
-                      setDraft((current) => ({ ...current, startFromOrigin }))
-                    }
-                    disabled={saving || !connected}
-                  />
+                  <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 </FormRow>
-              ) : null}
-              {draft.workspaceMode === "existing_worktree" ? (
-                <FormRow stacked label="Checkout path" htmlFor="scheduled-task-checkout">
+                <FormRow
+                  label="Skip requests older than"
+                  description="Minutes, optional"
+                  htmlFor="scheduled-task-max-age"
+                >
                   <Input
-                    id="scheduled-task-checkout"
+                    id="scheduled-task-max-age"
+                    type="number"
+                    nativeInput
                     size="sm"
-                    value={draft.existingWorktreePath}
-                    placeholder="/path/to/checkout"
+                    min={1}
+                    max={MAX_WEBHOOK_DELIVERY_AGE_MINUTES}
+                    className="w-28"
+                    placeholder="Any age"
+                    value={draft.maxDeliveryAgeMinutes}
                     onChange={(event) =>
                       setDraft((current) => ({
                         ...current,
-                        existingWorktreePath: event.target.value,
+                        maxDeliveryAgeMinutes: event.target.value,
                       }))
                     }
                   />
                 </FormRow>
-              ) : null}
-              <FormRow label="Model">
-                <div>
-                  <ProviderModelPicker
-                    environmentId={environmentId}
-                    disabled={saving || !connected}
-                    activeInstanceId={activeInstanceId}
-                    model={activeModel}
-                    lockedProvider={null}
-                    instanceEntries={instanceEntries}
-                    modelOptionsByInstance={modelOptionsByInstance}
-                    isComposerOwned={false}
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onInstanceModelChange={(instanceId, model) =>
-                      setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                <FormRow
+                  label="Require signature"
+                  description="Reject requests without a valid HMAC-SHA256 signature of the body."
+                  htmlFor="scheduled-task-signature"
+                >
+                  <Switch
+                    id="scheduled-task-signature"
+                    checked={draft.signatureEnabled}
+                    onCheckedChange={(signatureEnabled) =>
+                      setDraft((current) => ({ ...current, signatureEnabled }))
                     }
                   />
-                </div>
-              </FormRow>
-              <FormRow
-                label="Active"
-                description="Paused tasks stay saved but do not run."
-                htmlFor="scheduled-task-enabled"
+                </FormRow>
+                {draft.signatureEnabled ? (
+                  <FormRow stacked label="Signature">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Header" htmlFor="scheduled-task-signature-header">
+                        <Input
+                          id="scheduled-task-signature-header"
+                          size="sm"
+                          value={draft.signatureHeader}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureHeader: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Prefix" htmlFor="scheduled-task-signature-prefix">
+                        <Input
+                          id="scheduled-task-signature-prefix"
+                          size="sm"
+                          value={draft.signaturePrefix}
+                          placeholder="None"
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signaturePrefix: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Encoding" htmlFor="scheduled-task-signature-encoding">
+                        <Select
+                          value={draft.signatureEncoding}
+                          onValueChange={(value) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureEncoding: value === "base64" ? "base64" : "hex",
+                            }))
+                          }
+                        >
+                          <SelectTrigger size="sm" id="scheduled-task-signature-encoding">
+                            <SelectValue>{draft.signatureEncoding}</SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup>
+                            <SelectItem value="hex">hex</SelectItem>
+                            <SelectItem value="base64">base64</SelectItem>
+                          </SelectPopup>
+                        </Select>
+                      </Field>
+                      <Field label="Secret" htmlFor="scheduled-task-signature-secret">
+                        <Input
+                          id="scheduled-task-signature-secret"
+                          size="sm"
+                          type="password"
+                          autoComplete="off"
+                          value={draft.signatureSecret}
+                          placeholder={
+                            liveTask?.schedule.type === "webhook" && liveTask.webhook?.hasSecret
+                              ? "Unchanged"
+                              : "Shared secret"
+                          }
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              signatureSecret: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                  </FormRow>
+                ) : null}
+              </>
+            ) : null}
+          </FormList>
+
+          <FormList title="Details">
+            <FormRow label="Runs on" htmlFor="scheduled-task-environment">
+              <Select
+                value={environmentId}
+                disabled={task !== null || saving}
+                onValueChange={(id) => {
+                  const next = connectedEnvironments.find((entry) => entry.environmentId === id);
+                  if (!next) return;
+                  setEnvironmentId(next.environmentId);
+                  setDraft((current) => ({
+                    ...current,
+                    projectId: "",
+                    modelKey: "",
+                    baseModelSelection: null,
+                    baseRef: "main",
+                    startFromOrigin: true,
+                    existingWorktreePath: "",
+                  }));
+                }}
               >
-                <Switch
-                  id="scheduled-task-enabled"
-                  checked={draft.enabled}
-                  onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                <SelectTrigger id="scheduled-task-environment" size="sm" variant="ghost">
+                  <SelectValue>
+                    <span className="flex items-center gap-2">
+                      <EnvironmentMachineIcon
+                        kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
+                        className="size-4"
+                      />
+                      {environment?.label ?? "Unavailable environment"}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {connectedEnvironments.map((entry) => {
+                    const { secondary } = settingsScopeEnvironmentLabels(
+                      entry,
+                      connectedEnvironments,
+                    );
+                    return (
+                      <SelectItem
+                        key={entry.environmentId}
+                        value={entry.environmentId}
+                        label={entry.label}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <EnvironmentMachineIcon
+                            kind={resolveEnvironmentMachineKind(entry.serverConfig)}
+                            className="size-4"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate">{entry.label}</span>
+                            {secondary ? (
+                              <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                                {secondary}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectPopup>
+              </Select>
+            </FormRow>
+            <FormRow label="Project" htmlFor="scheduled-task-project">
+              <Select
+                value={selectedProjectId}
+                onValueChange={(projectId) =>
+                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+                }
+              >
+                <SelectTrigger size="sm" variant="ghost" id="scheduled-task-project">
+                  <SelectValue placeholder="Select project">{selectedProject?.title}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id} label={project.title}>
+                      <span className="block truncate">{project.title}</span>
+                      {allProjects.some(
+                        (other) =>
+                          other.title === project.title &&
+                          (other.environmentId !== project.environmentId ||
+                            other.id !== project.id),
+                      ) ? (
+                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                          {project.workspaceRoot}
+                        </span>
+                      ) : null}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </FormRow>
+            <FormRow label="Workspace" htmlFor="scheduled-task-workspace">
+              <Select
+                value={draft.workspaceMode}
+                onValueChange={(value) =>
+                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                }
+              >
+                <SelectTrigger size="sm" variant="ghost" id="scheduled-task-workspace">
+                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="worktree">Create a new worktree</SelectItem>
+                  <SelectItem value="root">Use the project checkout</SelectItem>
+                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                </SelectPopup>
+              </Select>
+            </FormRow>
+            {draft.workspaceMode === "worktree" ? (
+              <FormRow stacked label="Base branch" htmlFor="scheduled-task-base-ref">
+                <WorktreeBaseBranchPicker
+                  key={`${environmentId}:${selectedProjectId}`}
+                  id="scheduled-task-base-ref"
+                  environmentId={environmentId}
+                  cwd={selectedProject?.workspaceRoot ?? null}
+                  value={draft.baseRef}
+                  onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
+                  startFromOrigin={draft.startFromOrigin}
+                  onStartFromOriginChange={(startFromOrigin) =>
+                    setDraft((current) => ({ ...current, startFromOrigin }))
+                  }
+                  disabled={saving || !connected}
                 />
               </FormRow>
-            </FormList>
-          </fieldset>
-        </DialogPanel>
+            ) : null}
+            {draft.workspaceMode === "existing_worktree" ? (
+              <FormRow stacked label="Checkout path" htmlFor="scheduled-task-checkout">
+                <Input
+                  id="scheduled-task-checkout"
+                  size="sm"
+                  value={draft.existingWorktreePath}
+                  placeholder="/path/to/checkout"
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      existingWorktreePath: event.target.value,
+                    }))
+                  }
+                />
+              </FormRow>
+            ) : null}
+            <FormRow label="Model">
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </FormRow>
+            <FormRow
+              label="Active"
+              description="Paused tasks stay saved but do not run."
+              htmlFor="scheduled-task-enabled"
+            >
+              <Switch
+                id="scheduled-task-enabled"
+                checked={draft.enabled}
+                onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+              />
+            </FormRow>
+          </FormList>
+        </fieldset>
+      </DialogPanel>
 
-        <DialogFooter>
-          <DialogClose render={<Button variant="outline" size="sm" disabled={saving} />}>
-            Cancel
-          </DialogClose>
-          <Button
-            size="sm"
-            disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
-            onClick={() => void submit()}
-          >
-            {draft.editingId ? "Save" : "Create"}
-          </Button>
-        </DialogFooter>
-      </DialogPopup>
-    </Dialog>
+      <DialogFooter>
+        <DialogClose render={<Button variant="outline" size="sm" disabled={saving} />}>
+          Cancel
+        </DialogClose>
+        <Button
+          size="sm"
+          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          onClick={() => void submit()}
+        >
+          {draft.editingId ? "Save" : "Create"}
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

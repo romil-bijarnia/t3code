@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, SearchIcon } from "lucide-react";
 
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 
 import { openCommandPalette } from "../../commandPaletteBus";
@@ -70,14 +70,11 @@ export function SidebarBrandWidthProbe({
 }: {
   onWidthChange: (width: number) => void;
 }) {
-  const observeWidth = useCallback(
-    (probe: HTMLDivElement) => {
-      return observeResize(probe, ([entry]) => {
-        if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);
-      });
-    },
-    [onWidthChange],
-  );
+  const observeWidth = (probe: HTMLDivElement) => {
+    return observeResize(probe, ([entry]) => {
+      if (entry) onWidthChange(entry.borderBoxSize[0]?.inlineSize ?? probe.offsetWidth);
+    });
+  };
 
   return (
     <div
@@ -121,16 +118,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
-  const closeMobileSidebar = useCallback(() => {
+  const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
     }
-  }, [isMobile, setOpenMobile]);
+  };
 
-  const handleBackClick = useCallback(() => {
+  const handleBackClick = () => {
     closeMobileSidebar();
     void navigateToMainApp();
-  }, [closeMobileSidebar, navigateToMainApp]);
+  };
 
   return (
     <SidebarMenu className="flex-row items-center">
