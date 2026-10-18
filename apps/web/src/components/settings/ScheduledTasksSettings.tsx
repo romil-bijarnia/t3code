@@ -54,6 +54,7 @@ import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
@@ -108,7 +109,6 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  useRelativeTimeTick,
 } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
@@ -311,11 +311,16 @@ const SUGGESTIONS: ReadonlyArray<{
   },
 ];
 
-function taskStatusLabel(task: ScheduledTask): string {
+function taskStatusLabel(task: ScheduledTask): ReactNode {
   if (task.lastRunStatus === "running") return "In progress";
   if (!task.enabled) return "Paused";
   if (task.schedule.type === "webhook") return "Listening";
-  return task.nextRunAt ? `Next run, ${relativeLabel(task.nextRunAt)}` : "Not scheduled";
+  if (!task.nextRunAt) return "Not scheduled";
+  return (
+    <>
+      Next run, <ScheduledRelativeLabel value={task.nextRunAt} />
+    </>
+  );
 }
 
 function splitModelKey(value: string): ModelSelection | null {
@@ -350,11 +355,11 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
  * instant — render "in 5m" style labels for upcoming runs instead of a
  * misleading "just now".
  */
-export function relativeLabel(value: string | null): string {
+function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
-  const diffMs = new Date(value).getTime() - Date.now();
+  const diffMs = new Date(value).getTime() - nowMs;
   if (diffMs <= 0) {
-    const relative = formatRelativeTime(value);
+    const relative = formatRelativeTime(value, nowMs);
     if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
@@ -364,6 +369,13 @@ export function relativeLabel(value: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
+}
+
+// The clock is the label's own minute tick: the React Compiler caches a
+// `Date.now()` read in render on the timestamp alone.
+export function ScheduledRelativeLabel(props: { value: string | null }) {
+  const nowMinute = useNowMinute();
+  return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
 }
 
 const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
@@ -563,7 +575,6 @@ function ScheduledTaskEnvironmentList({
       onEdit(environmentId, linkedTask);
     }
   }, [environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
 
   const filtering = query.trim() !== "" || status !== "all";
   const visible = states.map((state) => ({
@@ -712,7 +723,6 @@ function ScheduledTaskEnvironmentSection({
       onEdit(environment.environmentId, linkedTask);
     }
   }, [environment.environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
   const filtering = query.trim() !== "" || status !== "all";
   const tasks = scoped?.filter((task) => matchesTaskFilter(task, query, status));
   return (
@@ -1033,7 +1043,7 @@ function WebhookDeliveriesDialog({
                   {DELIVERY_OUTCOME_LABELS[selected.outcome]}
                 </Badge>
                 <span>
-                  {selected.method} · {relativeLabel(selected.receivedAt)}
+                  {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
                 </span>
                 {selected.signatureVerified ? (
                   <span className="text-muted-foreground">Signature verified</span>
@@ -1080,7 +1090,7 @@ function WebhookDeliveriesDialog({
                     </Badge>
                     <span>{delivery.method}</span>
                     <span className="text-muted-foreground">
-                      {relativeLabel(delivery.receivedAt)}
+                      <ScheduledRelativeLabel value={delivery.receivedAt} />
                     </span>
                     {delivery.missingFields.length > 0 ? (
                       <span className="text-muted-foreground">
