@@ -28,7 +28,7 @@ function Switch({
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          "pointer-events-none block shrink-0 rounded-full border border-black/5 bg-white shadow-sm transition-transform duration-150 ease-out data-checked:translate-x-3",
+          "pointer-events-none block shrink-0 rounded-full border border-black/5 bg-white shadow-sm transition-transform duration-150 ease-out dark:data-unchecked:bg-muted-foreground data-checked:translate-x-3",
           size === "sm" ? "size-3" : "size-4",
           mixed && "translate-x-1.5 opacity-70 data-checked:translate-x-1.5",
         )}
