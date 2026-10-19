@@ -399,9 +399,9 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 
 /**
  * Always true in this build: the per-project tree is the sidebar, and the flat
- * one has no setting. The hook stays so its callers keep asking one question.
+ * one has no setting. The function stays so its callers keep asking one question.
  */
-export function useLegacySidebarEnabled(): boolean {
+export function isLegacySidebarEnabled(): boolean {
   return true;
 }
 
