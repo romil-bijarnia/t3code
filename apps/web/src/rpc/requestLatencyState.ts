@@ -6,9 +6,11 @@ import { appAtomRegistry } from "./atomRegistry";
 
 export const SLOW_RPC_ACK_THRESHOLD_MS = 15_000;
 /**
- * Some requests are slow by design — they shell out to a package manager on the
- * server and only respond once the install finishes. Warning about those after
- * 15s is noise, so they get a much longer leash.
+ * Some requests are slow by design. Provider and server updates shell out to a
+ * package manager and only respond once the install finishes. A VCS status
+ * refresh fetches, may auto-pull, looks up the pull request, and first waits for
+ * any background refresh of the same repository, which often totals over 15s.
+ * Warning about those after 15s is noise, so they get a much longer leash.
  */
 export const LONG_RUNNING_RPC_ACK_THRESHOLD_MS = 120_000;
 export const MAX_TRACKED_RPC_ACK_REQUESTS = 256;
@@ -28,9 +30,12 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-// A campus sign-in waits on the person at a window for as long as they take.
+// Background reports nobody waits on. A busy host delays them first, and warning
+// about a request the user never made does not say what is wrong. A campus
+// sign-in waits on the person at a window for as long as they take.
 const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
+  WS_METHODS.serverReportClientActivity,
   WS_METHODS.campusSignIn,
 ]);
 // Campus reads drive a browser through the lane; a signed-out portal can take
@@ -39,6 +44,7 @@ const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
   WS_METHODS.serverUpdateServer,
+  WS_METHODS.vcsRefreshStatus,
   WS_METHODS.campusStatus,
   WS_METHODS.campusOntrackOverview,
   WS_METHODS.campusOntrackTask,
