@@ -119,7 +119,7 @@ const make = Effect.gen(function* () {
     ms: DateTime.toEpochMillis(moment),
   }));
 
-  const laneCall = (input: {
+  const laneCall = Effect.fn("CampusService.laneCall")(function* (input: {
     readonly app: CampusApp;
     readonly operation: string;
     readonly tool: string;
@@ -127,80 +127,80 @@ const make = Effect.gen(function* () {
     readonly timeoutMs?: number;
     /** A forced read asks the lane again even when it recently wanted a sign-in. */
     readonly refresh?: boolean | undefined;
-  }) =>
-    Effect.gen(function* () {
-      const lane = laneOf(input.app);
-      const memo = signInMissing.get(lane);
-      const { ms: startedAt } = yield* stamp;
-      if (memo && input.refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
-        return yield* new CampusError({
-          app: input.app,
-          operation: input.operation,
-          reason: "sign_in_required",
-          detail: memo.detail,
-        });
-      }
-      if (input.refresh === true) signInMissing.delete(lane);
-      const online = yield* tools.ensureLane;
-      if (!online) {
-        return yield* new CampusError({
-          app: input.app,
-          operation: input.operation,
-          reason: "lane_offline",
-          detail: "The browser lane is not running and could not be started.",
-        });
-      }
-      const result = yield* Effect.result(
-        tools.call({
-          lane,
-          tool: input.tool,
-          args: input.args,
-          ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-        }),
-      );
-      if (Result.isSuccess(result)) return result.success;
-      const reason =
-        result.failure.category === "unavailable"
-          ? "lane_offline"
-          : classifyLaneFailure(result.failure.detail);
-      const detail = result.failure.detail || `${input.tool} did not answer.`;
-      if (reason === "sign_in_required") {
-        signInMissing.set(lane, { at: (yield* stamp).ms, detail });
-      }
-      return yield* new CampusError({ app: input.app, operation: input.operation, reason, detail });
-    });
+  }) {
+    const lane = laneOf(input.app);
+    const memo = signInMissing.get(lane);
+    const { ms: startedAt } = yield* stamp;
+    if (memo && input.refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
+      return yield* new CampusError({
+        app: input.app,
+        operation: input.operation,
+        reason: "sign_in_required",
+        detail: memo.detail,
+      });
+    }
+    if (input.refresh === true) signInMissing.delete(lane);
+    const online = yield* tools.ensureLane;
+    if (!online) {
+      return yield* new CampusError({
+        app: input.app,
+        operation: input.operation,
+        reason: "lane_offline",
+        detail: "The browser lane is not running and could not be started.",
+      });
+    }
+    const result = yield* Effect.result(
+      tools.call({
+        lane,
+        tool: input.tool,
+        args: input.args,
+        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      }),
+    );
+    if (Result.isSuccess(result)) return result.success;
+    const reason =
+      result.failure.category === "unavailable"
+        ? "lane_offline"
+        : classifyLaneFailure(result.failure.detail);
+    const detail = result.failure.detail || `${input.tool} did not answer.`;
+    if (reason === "sign_in_required") {
+      signInMissing.set(lane, { at: (yield* stamp).ms, detail });
+    }
+    return yield* new CampusError({ app: input.app, operation: input.operation, reason, detail });
+  });
 
   /**
    * Serves the kept copy while it is fresh, otherwise reads; a failed read
    * with a kept copy hands that copy back marked stale with the lane's reason,
    * so a page keeps its content and shows what to do.
    */
-  const keep = <A extends { readonly meta: CampusFetchMeta }>(
+  const keep = Effect.fn("CampusService.keep")(function* <
+    A extends { readonly meta: CampusFetchMeta },
+  >(
     key: string,
     refresh: boolean | undefined,
     read: Effect.Effect<A, CampusError>,
-  ): Effect.Effect<A, CampusError> =>
-    Effect.gen(function* () {
-      const hit = kept.get(key);
-      const { ms: startedAt } = yield* stamp;
-      if (hit && refresh !== true && startedAt - hit.at < FRESH_FOR_MS) return hit.value as A;
-      const result = yield* Effect.result(read);
-      if (Result.isSuccess(result)) {
-        kept.set(key, { value: result.success, at: (yield* stamp).ms });
-        return result.success;
-      }
-      if (!hit) return yield* result.failure;
-      const previous = hit.value as A;
-      return {
-        ...previous,
-        meta: {
-          ...previous.meta,
-          stale: true,
-          note: result.failure.detail,
-          issue: result.failure.reason,
-        },
-      };
-    });
+  ): Effect.fn.Return<A, CampusError> {
+    const hit = kept.get(key);
+    const { ms: startedAt } = yield* stamp;
+    if (hit && refresh !== true && startedAt - hit.at < FRESH_FOR_MS) return hit.value as A;
+    const result = yield* Effect.result(read);
+    if (Result.isSuccess(result)) {
+      kept.set(key, { value: result.success, at: (yield* stamp).ms });
+      return result.success;
+    }
+    if (!hit) return yield* result.failure;
+    const previous = hit.value as A;
+    return {
+      ...previous,
+      meta: {
+        ...previous.meta,
+        stale: true,
+        note: result.failure.detail,
+        issue: result.failure.reason,
+      },
+    };
+  });
 
   const status: CampusService["Service"]["status"] = Effect.gen(function* () {
     const laneOnline = yield* tools.ensureLane;
@@ -305,65 +305,68 @@ const make = Effect.gen(function* () {
   });
 
   /** OnTrack API calls remember a lane refusal like any other lane read. */
-  const ontrackGet = (path: string, refresh: boolean | undefined) =>
-    Effect.gen(function* () {
-      const memo = signInMissing.get("deakin");
-      const { ms: startedAt } = yield* stamp;
-      if (memo && refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
-        return yield* new CampusError({
-          app: "ontrack",
-          operation: path,
-          reason: "sign_in_required",
-          detail: memo.detail,
-        });
-      }
-      if (refresh === true) signInMissing.delete("deakin");
-      const result = yield* Effect.result(ontrackApi.get(path));
-      if (Result.isSuccess(result)) return result.success;
-      if (result.failure.reason === "sign_in_required") {
-        signInMissing.set("deakin", { at: (yield* stamp).ms, detail: result.failure.detail });
-      }
-      return yield* result.failure;
-    });
+  const ontrackGet = Effect.fn("CampusService.ontrackGet")(function* (
+    path: string,
+    refresh: boolean | undefined,
+  ) {
+    const memo = signInMissing.get("deakin");
+    const { ms: startedAt } = yield* stamp;
+    if (memo && refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
+      return yield* new CampusError({
+        app: "ontrack",
+        operation: path,
+        reason: "sign_in_required",
+        detail: memo.detail,
+      });
+    }
+    if (refresh === true) signInMissing.delete("deakin");
+    const result = yield* Effect.result(ontrackApi.get(path));
+    if (Result.isSuccess(result)) return result.success;
+    if (result.failure.reason === "sign_in_required") {
+      signInMissing.set("deakin", { at: (yield* stamp).ms, detail: result.failure.detail });
+    }
+    return yield* result.failure;
+  });
 
-  const ontrackOverview: CampusService["Service"]["ontrackOverview"] = (input) =>
-    Effect.gen(function* () {
-      if (input.refresh !== true && !kept.has("ontrack:overview")) {
-        const fromFiles = yield* ontrackOverviewFromLaneFiles;
-        if (fromFiles) return fromFiles;
-      }
-      return yield* keep(
-        "ontrack:overview",
-        input.refresh,
-        Effect.gen(function* () {
-          const [projects, periods] = yield* Effect.all(
-            [
-              ontrackGet("/api/projects/?include_in_active=false", input.refresh),
-              ontrackGet("/api/teaching_periods/", input.refresh),
-            ],
-            { concurrency: 2 },
-          );
-          const current = currentProjects(projects, periods, (yield* stamp).ms);
-          const detailed = yield* Effect.forEach(
-            current,
-            ({ projectId, unitId }) =>
-              Effect.all(
-                [
-                  ontrackGet(`/api/projects/${projectId}`, input.refresh),
-                  ontrackGet(`/api/units/${unitId}`, input.refresh),
-                ],
-                { concurrency: 2 },
-              ).pipe(Effect.map(([project, unit]) => ({ project, unit }))),
-            { concurrency: 3 },
-          );
-          return normalizeOnTrackApiOverview({
-            projects: detailed,
-            periods,
-            fetchedAt: (yield* stamp).iso,
-          });
-        }),
-      );
-    });
+  const ontrackOverview: CampusService["Service"]["ontrackOverview"] = Effect.fn(
+    "CampusService.ontrackOverview",
+  )(function* (input) {
+    if (input.refresh !== true && !kept.has("ontrack:overview")) {
+      const fromFiles = yield* ontrackOverviewFromLaneFiles;
+      if (fromFiles) return fromFiles;
+    }
+    return yield* keep(
+      "ontrack:overview",
+      input.refresh,
+      Effect.gen(function* () {
+        const [projects, periods] = yield* Effect.all(
+          [
+            ontrackGet("/api/projects/?include_in_active=false", input.refresh),
+            ontrackGet("/api/teaching_periods/", input.refresh),
+          ],
+          { concurrency: 2 },
+        );
+        const current = currentProjects(projects, periods, (yield* stamp).ms);
+        const detailed = yield* Effect.forEach(
+          current,
+          ({ projectId, unitId }) =>
+            Effect.all(
+              [
+                ontrackGet(`/api/projects/${projectId}`, input.refresh),
+                ontrackGet(`/api/units/${unitId}`, input.refresh),
+              ],
+              { concurrency: 2 },
+            ).pipe(Effect.map(([project, unit]) => ({ project, unit }))),
+          { concurrency: 3 },
+        );
+        return normalizeOnTrackApiOverview({
+          projects: detailed,
+          periods,
+          fetchedAt: (yield* stamp).iso,
+        });
+      }),
+    );
+  });
 
   const ontrackTask: CampusService["Service"]["ontrackTask"] = (input) =>
     keep(
@@ -422,54 +425,53 @@ const make = Effect.gen(function* () {
    * parser predates the current Outlook web app and glues a row into one
    * string, while the row structure still carries sender, subject and time.
    */
-  const laneScript = (input: {
+  const laneScript = Effect.fn("CampusService.laneScript")(function* (input: {
     readonly app: CampusApp;
     readonly operation: string;
     readonly args: ReadonlyArray<string>;
     readonly refresh?: boolean | undefined;
-  }) =>
-    Effect.gen(function* () {
-      const lane = laneOf(input.app);
-      const memo = signInMissing.get(lane);
-      const { ms: startedAt } = yield* stamp;
-      if (memo && input.refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
-        return yield* new CampusError({
-          app: input.app,
-          operation: input.operation,
-          reason: "sign_in_required",
-          detail: memo.detail,
-        });
-      }
-      if (input.refresh === true) signInMissing.delete(lane);
-      const online = yield* tools.ensureLane;
-      if (!online) {
-        return yield* new CampusError({
-          app: input.app,
-          operation: input.operation,
-          reason: "lane_offline",
-          detail: "The browser lane is not running and could not be started.",
-        });
-      }
-      const result = yield* tools.laneRun(lane, input.args).pipe(
-        Effect.mapError(
-          (error) =>
-            new CampusError({
-              app: input.app,
-              operation: input.operation,
-              reason: "lane_offline",
-              detail: error.detail || "The lane did not answer.",
-            }),
-        ),
-      );
-      if (result.ok) return result.payload;
-      const detail = result.detail ?? "The lane did not answer.";
-      const reason =
-        result.reason === "sign_in_required" ? "sign_in_required" : classifyLaneFailure(detail);
-      if (reason === "sign_in_required") {
-        signInMissing.set(lane, { at: (yield* stamp).ms, detail });
-      }
-      return yield* new CampusError({ app: input.app, operation: input.operation, reason, detail });
-    });
+  }) {
+    const lane = laneOf(input.app);
+    const memo = signInMissing.get(lane);
+    const { ms: startedAt } = yield* stamp;
+    if (memo && input.refresh !== true && startedAt - memo.at < SIGN_IN_MEMO_MS) {
+      return yield* new CampusError({
+        app: input.app,
+        operation: input.operation,
+        reason: "sign_in_required",
+        detail: memo.detail,
+      });
+    }
+    if (input.refresh === true) signInMissing.delete(lane);
+    const online = yield* tools.ensureLane;
+    if (!online) {
+      return yield* new CampusError({
+        app: input.app,
+        operation: input.operation,
+        reason: "lane_offline",
+        detail: "The browser lane is not running and could not be started.",
+      });
+    }
+    const result = yield* tools.laneRun(lane, input.args).pipe(
+      Effect.mapError(
+        (error) =>
+          new CampusError({
+            app: input.app,
+            operation: input.operation,
+            reason: "lane_offline",
+            detail: error.detail || "The lane did not answer.",
+          }),
+      ),
+    );
+    if (result.ok) return result.payload;
+    const detail = result.detail ?? "The lane did not answer.";
+    const reason =
+      result.reason === "sign_in_required" ? "sign_in_required" : classifyLaneFailure(detail);
+    if (reason === "sign_in_required") {
+      signInMissing.set(lane, { at: (yield* stamp).ms, detail });
+    }
+    return yield* new CampusError({ app: input.app, operation: input.operation, reason, detail });
+  });
 
   const outlookInbox: CampusService["Service"]["outlookInbox"] = (input) =>
     keep(
@@ -582,8 +584,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const signIn: CampusService["Service"]["signIn"] = (input) =>
-    Effect.gen(function* () {
+  const signIn: CampusService["Service"]["signIn"] = Effect.fn("CampusService.signIn")(
+    function* (input) {
       const lane = laneOf(input.app);
       const online = yield* tools.ensureLane;
       if (!online) {
@@ -626,7 +628,8 @@ const make = Effect.gen(function* () {
       const current = yield* status;
       const app = current.apps.find((candidate) => candidate.app === input.app);
       return { signedIn: app?.signedIn ?? false, detail: app?.detail ?? null };
-    });
+    },
+  );
 
   return CampusService.of({
     status,

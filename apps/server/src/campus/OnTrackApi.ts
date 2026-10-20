@@ -47,43 +47,42 @@ const make = Effect.gen(function* () {
     saved === null ? null : Option.getOrNull(readTokenFile(saved)),
   );
 
-  const mint = (operation: string) =>
-    Effect.gen(function* () {
-      const online = yield* tools.ensureLane;
-      if (!online) {
-        return yield* new CampusError({
-          app: "ontrack",
-          operation,
-          reason: "lane_offline",
-          detail: "The browser lane is not running and could not be started.",
-        });
-      }
-      const minted = yield* tools.laneRun("deakin", ["ontrack-token"]).pipe(
-        Effect.mapError(
-          (error) =>
-            new CampusError({
-              app: "ontrack",
-              operation,
-              reason: "lane_offline",
-              detail: error.detail || "The lane could not sign in to OnTrack.",
-            }),
-        ),
-      );
-      const authToken = minted.payload.authToken;
-      const username = minted.payload.username;
-      if (!minted.ok || typeof authToken !== "string" || typeof username !== "string") {
-        return yield* new CampusError({
-          app: "ontrack",
-          operation,
-          reason: minted.reason === "sign_in_required" ? "sign_in_required" : "tool_failed",
-          detail: minted.detail ?? "OnTrack did not issue a token.",
-        });
-      }
-      const token: OnTrackToken = { authToken, username };
-      yield* Ref.set(tokenRef, token);
-      yield* tools.writeLaneFile(TOKEN_FILENAME, writeTokenFile(token));
-      return token;
-    });
+  const mint = Effect.fn("OnTrackApi.mint")(function* (operation: string) {
+    const online = yield* tools.ensureLane;
+    if (!online) {
+      return yield* new CampusError({
+        app: "ontrack",
+        operation,
+        reason: "lane_offline",
+        detail: "The browser lane is not running and could not be started.",
+      });
+    }
+    const minted = yield* tools.laneRun("deakin", ["ontrack-token"]).pipe(
+      Effect.mapError(
+        (error) =>
+          new CampusError({
+            app: "ontrack",
+            operation,
+            reason: "lane_offline",
+            detail: error.detail || "The lane could not sign in to OnTrack.",
+          }),
+      ),
+    );
+    const authToken = minted.payload.authToken;
+    const username = minted.payload.username;
+    if (!minted.ok || typeof authToken !== "string" || typeof username !== "string") {
+      return yield* new CampusError({
+        app: "ontrack",
+        operation,
+        reason: minted.reason === "sign_in_required" ? "sign_in_required" : "tool_failed",
+        detail: minted.detail ?? "OnTrack did not issue a token.",
+      });
+    }
+    const token: OnTrackToken = { authToken, username };
+    yield* Ref.set(tokenRef, token);
+    yield* tools.writeLaneFile(TOKEN_FILENAME, writeTokenFile(token));
+    return token;
+  });
 
   const request = (path: string, token: OnTrackToken) =>
     http
@@ -108,43 +107,42 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const get: OnTrackApi["Service"]["get"] = (path) =>
-    Effect.gen(function* () {
-      let token = (yield* Ref.get(tokenRef)) ?? (yield* mint(path));
-      let response = yield* request(path, token);
+  const get: OnTrackApi["Service"]["get"] = Effect.fn("OnTrackApi.get")(function* (path) {
+    let token = (yield* Ref.get(tokenRef)) ?? (yield* mint(path));
+    let response = yield* request(path, token);
+    if (TOKEN_REFUSED.has(response.status)) {
+      // The token aged out; one fresh token, then the answer stands.
+      yield* Ref.set(tokenRef, null);
+      token = yield* mint(path);
+      response = yield* request(path, token);
       if (TOKEN_REFUSED.has(response.status)) {
-        // The token aged out; one fresh token, then the answer stands.
-        yield* Ref.set(tokenRef, null);
-        token = yield* mint(path);
-        response = yield* request(path, token);
-        if (TOKEN_REFUSED.has(response.status)) {
-          return yield* new CampusError({
-            app: "ontrack",
-            operation: path,
-            reason: "sign_in_required",
-            detail: "OnTrack no longer accepts this session; sign in again.",
-          });
-        }
-      }
-      if (response.status < 200 || response.status >= 300) {
         return yield* new CampusError({
           app: "ontrack",
           operation: path,
-          reason: "tool_failed",
-          detail: `OnTrack answered ${response.status}.`,
+          reason: "sign_in_required",
+          detail: "OnTrack no longer accepts this session; sign in again.",
         });
       }
-      const body = yield* Effect.result(response.json);
-      if (Result.isFailure(body)) {
-        return yield* new CampusError({
-          app: "ontrack",
-          operation: path,
-          reason: "tool_failed",
-          detail: "OnTrack answered with something other than JSON.",
-        });
-      }
-      return body.success;
-    });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new CampusError({
+        app: "ontrack",
+        operation: path,
+        reason: "tool_failed",
+        detail: `OnTrack answered ${response.status}.`,
+      });
+    }
+    const body = yield* Effect.result(response.json);
+    if (Result.isFailure(body)) {
+      return yield* new CampusError({
+        app: "ontrack",
+        operation: path,
+        reason: "tool_failed",
+        detail: "OnTrack answered with something other than JSON.",
+      });
+    }
+    return body.success;
+  });
 
   return OnTrackApi.of({ get });
 });

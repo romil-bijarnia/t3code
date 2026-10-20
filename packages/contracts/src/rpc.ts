@@ -1972,7 +1972,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2034,16 +2034,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
-  WsCampusStatusRpc,
-  WsCampusOntrackOverviewRpc,
-  WsCampusOntrackTaskRpc,
-  WsCampusOutlookInboxRpc,
-  WsCampusOutlookEmailRpc,
-  WsCampusOutlookCalendarRpc,
-  WsCampusTeamsThreadsRpc,
-  WsCampusTeamsThreadRpc,
-  WsCampusDeakinsyncPageRpc,
-  WsCampusSignInRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
@@ -2183,3 +2173,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
+
+// The server implements WsCoreRpcGroup as one handler object, and that object already
+// sits at TypeScript's instantiation limit: adding these procedures to it makes the
+// server's handler layer resolve to `any`. The campus procedures therefore form their
+// own group with its own handler layer; WsRpcGroup stays the complete client surface.
+export const WsCampusRpcGroup = RpcGroup.make(
+  WsCampusStatusRpc,
+  WsCampusOntrackOverviewRpc,
+  WsCampusOntrackTaskRpc,
+  WsCampusOutlookInboxRpc,
+  WsCampusOutlookEmailRpc,
+  WsCampusOutlookCalendarRpc,
+  WsCampusTeamsThreadsRpc,
+  WsCampusTeamsThreadRpc,
+  WsCampusDeakinsyncPageRpc,
+  WsCampusSignInRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsCampusRpcGroup);

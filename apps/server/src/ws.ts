@@ -94,6 +94,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCampusRpcGroup,
+  WsCoreRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import {
@@ -545,6 +547,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerWsCampusRpcGroup = WsCampusRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1181,6 +1185,25 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// Kept out of the main handler object; see WsCampusRpcGroup in contracts.
+const layerWsCampusRpc = ServerWsCampusRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const campus = yield* Campus.CampusService;
+    return ServerWsCampusRpcGroup.of({
+      [WS_METHODS.campusStatus]: (_input) => campus.status,
+      [WS_METHODS.campusOntrackOverview]: (input) => campus.ontrackOverview(input),
+      [WS_METHODS.campusOntrackTask]: (input) => campus.ontrackTask(input),
+      [WS_METHODS.campusOutlookInbox]: (input) => campus.outlookInbox(input),
+      [WS_METHODS.campusOutlookEmail]: (input) => campus.outlookEmail(input),
+      [WS_METHODS.campusOutlookCalendar]: (input) => campus.outlookCalendar(input),
+      [WS_METHODS.campusTeamsThreads]: (input) => campus.teamsThreads(input),
+      [WS_METHODS.campusTeamsThread]: (input) => campus.teamsThread(input),
+      [WS_METHODS.campusDeakinsyncPage]: (input) => campus.deakinsyncPage(input),
+      [WS_METHODS.campusSignIn]: (input) => campus.signIn(input),
+    });
+  }),
+);
+
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1188,7 +1211,7 @@ export const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1223,7 +1246,6 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
-      const campus = yield* Campus.CampusService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -1805,7 +1827,7 @@ export const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2077,16 +2099,6 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
-        [WS_METHODS.campusStatus]: (_input) => campus.status,
-        [WS_METHODS.campusOntrackOverview]: (input) => campus.ontrackOverview(input),
-        [WS_METHODS.campusOntrackTask]: (input) => campus.ontrackTask(input),
-        [WS_METHODS.campusOutlookInbox]: (input) => campus.outlookInbox(input),
-        [WS_METHODS.campusOutlookEmail]: (input) => campus.outlookEmail(input),
-        [WS_METHODS.campusOutlookCalendar]: (input) => campus.outlookCalendar(input),
-        [WS_METHODS.campusTeamsThreads]: (input) => campus.teamsThreads(input),
-        [WS_METHODS.campusTeamsThread]: (input) => campus.teamsThread(input),
-        [WS_METHODS.campusDeakinsyncPage]: (input) => campus.deakinsyncPage(input),
-        [WS_METHODS.campusSignIn]: (input) => campus.signIn(input),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
@@ -3146,7 +3158,7 @@ export const layerWsRpc = (
       });
       return handlers;
     }),
-  );
+  ).pipe(Layer.merge(layerWsCampusRpc));
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.

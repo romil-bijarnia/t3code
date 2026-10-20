@@ -128,7 +128,10 @@ describe("DesktopPreReadyPlatform", () => {
       yield* DesktopPreReadyPlatform.make;
       assert.deepEqual(readFileSyncMock.mock.calls, []);
       assert.deepEqual(writeFileSyncMock.mock.calls, []);
-      assert.deepEqual(appendSwitchMock.mock.calls, []);
+      assert.deepEqual(
+        appendSwitchMock.mock.calls,
+        platform === "darwin" ? [["use-mock-keychain"]] : [],
+      );
     }).pipe(Effect.provideService(HostProcess.Platform, platform));
   });
 
