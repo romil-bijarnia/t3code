@@ -24,6 +24,15 @@ describe("appendTerminalOutput", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
 
+  it("moves tabs to the next stop without overwriting existing text", () => {
+    expect(feed(["abcdefghij", "\r\t", "X"]).text).toBe("abcdefghXj");
+    expect(feed(["a\tb"]).text).toBe("a       b");
+    expect(feed(["abcdefgh\tX"]).text).toBe("abcdefgh        X");
+    expect(feed(["a\tb\bX"]).text).toBe("a       X");
+    expect(feed(["a\t", "\tb"]).text).toBe("a               b");
+    expect(feed(["a\tb\nc\td"]).text).toBe("a       b\nc       d");
+  });
+
   it("redraws several lines in place when the cursor moves up", () => {
     const frames = [
       "layer a: 10%\nlayer b: 10%\n",
@@ -107,6 +116,7 @@ describe("appendTerminalOutput edge cases from review", () => {
 describe("appendTerminalOutput under adversarial output", () => {
   it("gives the same result however the output is split into chunks", () => {
     const input =
+      "abcdefghij\r\tX\na\tb\bX\n" +
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
       "\u001b[1;31mbold red\u001b[mplain\u001b[38:2::12:34:56mrgb\u001b[0m\n" +
       "\u001b[1;31mbold red again\u001b[mplain again\u001b[38:2::12:34:56mrgb again\u001b[0m";
