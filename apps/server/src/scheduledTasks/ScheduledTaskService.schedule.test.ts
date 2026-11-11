@@ -5,6 +5,7 @@ import { ScheduledTaskUpsertInput } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -119,6 +120,101 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       );
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect.each(["edited", "delayed"] as const)(
+  "refreshes %s tasks from a stale due snapshot",
+  (change) =>
+    Effect.gen(function* () {
+      const morning = DateTime.makeZonedUnsafe(
+        { year: 2026, month: 7, day: 1, hour: 7, minute: 0, second: 0, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+      yield* TestClock.setTime(DateTime.toEpochMillis(morning));
+      const started = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      const workers = new Map<string, Effect.Effect<void>>();
+      const dependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        ManagedPolicy.layerTest(),
+        Layer.succeed(Scheduler.Scheduler, {
+          register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+            Effect.gen(function* () {
+              const context = yield* Effect.context<R>();
+              workers.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
+            }),
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(proceed)),
+              Effect.andThen(Effect.die("synthetic earlier dispatch failure")),
+            ),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = {
+          title: "Morning review",
+          prompt: "Review the open pull requests.",
+          enabled: true,
+          projectId: "project-stale-missed-run",
+          threadMode: "new_thread",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        };
+        yield* service.upsert(
+          yield* decodeUpsertInput({
+            ...input,
+            title: "Earlier run",
+            schedule: {
+              type: "once",
+              runAt: DateTime.formatIso(DateTime.add(morning, { hours: 1 })),
+            },
+          }),
+        );
+        const { task } = yield* service.upsert(
+          yield* decodeUpsertInput({
+            ...input,
+            schedule: { type: "fixed_time", timeOfDay: "09:00" },
+          }),
+        );
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(
+            DateTime.add(morning, { hours: 2, minutes: change === "edited" ? 30 : 5 }),
+          ),
+        );
+        const poll = yield* workers
+          .get("scheduled-tasks")!
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const expectedNext =
+          change === "edited"
+            ? (yield* service.upsert(
+                yield* decodeUpsertInput({
+                  ...input,
+                  id: task.id,
+                  requireExisting: true,
+                  schedule: { type: "fixed_time", timeOfDay: "10:00" },
+                }),
+              )).task.nextRunAt
+            : DateTime.formatIso(DateTime.add(morning, { days: 1, hours: 2 }));
+        if (change === "delayed") yield* TestClock.adjust("1 hour");
+        yield* Deferred.succeed(proceed, undefined);
+        yield* Fiber.join(poll);
+        const current = (yield* service.list()).tasks.find((row) => row.id === task.id);
+        expect(current?.nextRunAt).toBe(expectedNext);
+        expect(current?.runCount).toBe(0);
+      }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("keeps the task list order when a toggle or edit rewrites updated_at", () =>

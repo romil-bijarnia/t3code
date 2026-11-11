@@ -892,6 +892,14 @@ export const layer = Layer.effect(
         ) {
           return { task: active, threadId: null, dispatchFailed: false };
         }
+        if (
+          trigger === "scheduled" &&
+          Option.isSome(parsedNextRunAt) &&
+          isMissedFixedTimeRun(active.schedule, parsedNextRunAt.value, startedAt)
+        ) {
+          yield* rescheduleMissedRun(active, startedAt);
+          return { task: active, threadId: null, dispatchFailed: false };
+        }
         // Reject queued deliveries after pause, same-id recreation or trigger changes.
         if (webhook !== undefined) {
           const reason =
@@ -1116,21 +1124,25 @@ export const layer = Layer.effect(
       now: DateTime.DateTime,
     ) {
       const next = nextRunAt(task, now);
-      yield* Effect.logInfo("Skipping missed schedule task run", {
-        taskId: task.id,
-        missedRunAt: task.nextRunAt,
-        rescheduledTo: next,
-      });
-      yield* sql`
+      const updated = yield* sql<{ task_id: string }>`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
-        WHERE task_id = ${task.id}
+        WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+          AND enabled = 1 AND next_run_at = ${task.nextRunAt}
+          AND last_run_status <> 'running'
+        RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
         ),
       );
+      if (updated.length === 0) return;
+      yield* Effect.logInfo("Skipping missed schedule task run", {
+        taskId: task.id,
+        missedRunAt: task.nextRunAt,
+        rescheduledTo: next,
+      });
       yield* notifyChanged;
     });
 
@@ -1161,17 +1173,10 @@ export const layer = Layer.effect(
       const tasks = yield* listDueTasks(now).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
-      const due = tasks.flatMap((task) =>
-        task.nextRunAt === null ? [] : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
-      );
       yield* Effect.forEach(
-        due,
-        ({ task, dueAt }) =>
-          Effect.suspend(() =>
-            isMissedFixedTimeRun(task.schedule, dueAt, now)
-              ? rescheduleMissedRun(task, now)
-              : runTask(task, "scheduled"),
-          ).pipe(
+        tasks,
+        (task) =>
+          runTask(task, "scheduled").pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
             ),
