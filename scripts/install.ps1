@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = "pingdotgg/t3code"
-$baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
+$baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL } else { "https://github.com/$repo/releases/download" }
 $t3Home = if ($env:T3CODE_HOME) { $env:T3CODE_HOME } else { Join-Path $HOME ".t3" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 # Absolute, so PATH never gets a folder that changes with the working directory.
@@ -164,6 +164,13 @@ $versionsDir = Join-Path $t3Home "runtime\versions"
 $targetDir = Join-Path $versionsDir $version
 $marker = Join-Path $targetDir ".install-complete"
 
+function Release-AssetUrl([string] $name) {
+  $url = [System.UriBuilder]::new($baseUrl)
+  $url.Path = $url.Path.TrimEnd("/") + "/v$version/$name"
+  $url.Fragment = ""
+  return $url.Uri.AbsoluteUri
+}
+
 if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
   Step "Version $version is already downloaded."
 } else {
@@ -175,7 +182,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     [Console]::Error.WriteLine("  ${muted}Installing$reset T3 Code $bold$version$reset`n")
     Step "Downloading..."
     try {
-      Fetch "$baseUrl/v$version/SHA256SUMS" (Join-Path $staging "SHA256SUMS")
+      Fetch (Release-AssetUrl "SHA256SUMS") (Join-Path $staging "SHA256SUMS")
     } catch {
       $status = $_.Exception.Response.StatusCode.value__
       if ($status -eq 404) {
@@ -183,7 +190,7 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
       }
       throw
     }
-    Fetch "$baseUrl/v$version/$archive" (Join-Path $staging $archive) -progress
+    Fetch (Release-AssetUrl $archive) (Join-Path $staging $archive) -progress
 
     Step "Verifying the download..."
 

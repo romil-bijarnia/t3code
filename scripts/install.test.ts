@@ -12,6 +12,53 @@ const nightlies = Array.from({ length: 100 }, (_, index) => ({
   tag_name: `v1.2.4-nightly.20261020.${200 - index}`,
 }));
 
+const powershell =
+  HostProcess.Platform.defaultValue() === "win32"
+    ? "powershell.exe"
+    : process.env.T3_TEST_POWERSHELL;
+
+describe.skipIf(!powershell)("PowerShell release URLs", () => {
+  it("appends asset paths before a signed mirror query", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-url-"));
+    try {
+      const script = NodePath.join(root, "check.ps1");
+      await NodeFSP.writeFile(
+        script,
+        [
+          "param([string] $installer)",
+          "$tokens = $null; $parseErrors = $null",
+          "$ast = [System.Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$parseErrors)",
+          "if ($parseErrors.Count -ne 0) { throw $parseErrors[0] }",
+          "$definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Release-AssetUrl' }, $true)",
+          "if (-not $definition) { throw 'Missing release URL function' }",
+          "Invoke-Expression $definition.Extent.Text",
+          "$version = '1.2.3'",
+          "$baseUrl = 'https://mirror.example/releases/download/?token=fixture%2Fsignature&mode=private#ignored'",
+          "Release-AssetUrl 'SHA256SUMS'",
+          "Release-AssetUrl 't3-1.2.3-win32-arm64.zip'",
+        ].join("\n"),
+      );
+      const result = NodeChildProcess.execFileSync(
+        powershell!,
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-File",
+          script,
+          NodePath.resolve(import.meta.dirname, "install.ps1"),
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.trim().split(/\r?\n/)).toEqual([
+        "https://mirror.example/releases/download/v1.2.3/SHA256SUMS?token=fixture%2Fsignature&mode=private",
+        "https://mirror.example/releases/download/v1.2.3/t3-1.2.3-win32-arm64.zip?token=fixture%2Fsignature&mode=private",
+      ]);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home", () => {
   it("installs a relative home from a directory ending in a newline", async () => {
     const temporaryRoot = await NodeFSP.realpath(
@@ -221,14 +268,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
       );
 
       // Containers and CI often have no SHELL; `set -u` must not stop the installer there.
-      const noShell = await installOver({
-        script: "install.sh",
-        home,
-        binDir,
-        env: { HOME: root, SHELL: undefined, PATH: "/usr/bin:/bin" },
-      });
-      expect(noShell.code, noShell.output).toBe(0);
-      expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
+      for (const shell of [undefined, ""]) {
+        const noShell = await installOver({
+          script: "install.sh",
+          home,
+          binDir,
+          env: { HOME: root, SHELL: shell, PATH: "/usr/bin:/bin" },
+        });
+        expect(noShell.code, noShell.output).toBe(0);
+        if (shell === "") expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
+      }
 
       // Its folder on PATH with a trailing slash is still this t3, not another one.
       const slashed = await installOver({
@@ -350,13 +399,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer checksum", () => {
-  it.each(
-    ["home\\data", "home\ndata"].flatMap((homeName) =>
-      [true, false].map((validChecksum) => ({ homeName, validChecksum })),
+  it.each([
+    ...["home\\data", "home\ndata"].flatMap((homeName) =>
+      [true, false].map((validChecksum) => ({ homeName, validChecksum, mirrorQuery: "" })),
     ),
-  )(
+    {
+      homeName: "signed mirror",
+      validChecksum: true,
+      mirrorQuery: "?token=fixture%2Fsignature&mode=private",
+    },
+  ])(
     "verifies home $homeName with valid checksum $validChecksum",
-    async ({ homeName, validChecksum }) => {
+    async ({ homeName, validChecksum, mirrorQuery }) => {
       const availableTools = ["sha256sum", "shasum"].filter(
         (tool) =>
           NodeChildProcess.spawnSync("sh", ["-c", 'command -v "$1"', "sh", tool]).status === 0,
@@ -405,8 +459,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
           const archive = await NodeFSP.readFile(archivePath);
           const digest = NodeCrypto.createHash("sha256").update(archive).digest("hex");
           server.on("request", (request, response) => {
+            const url = new URL(request.url ?? "/", "http://fixture");
+            if (url.search !== mirrorQuery || !url.pathname.startsWith(`/v${version}/`)) {
+              response.writeHead(404).end();
+              return;
+            }
             response.end(
-              request.url?.endsWith("/SHA256SUMS")
+              url.pathname.endsWith("/SHA256SUMS")
                 ? `${validChecksum ? digest : "0".repeat(64)}  ${archiveName}\n`
                 : archive,
             );
@@ -426,7 +485,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
                     T3CODE_VERSION: version,
                     T3CODE_HOME: home,
                     T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
-                    T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
+                    T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}${mirrorQuery ? `/${mirrorQuery}#ignored` : ""}`,
                   },
                   stdio: ["ignore", "pipe", "pipe"],
                 },

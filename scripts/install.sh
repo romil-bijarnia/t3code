@@ -19,6 +19,12 @@ set -eu
 
 repo="pingdotgg/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
+base_url="${base_url%%#*}"
+base_query=
+case "$base_url" in
+  *\?*) base_query="?${base_url#*\?}"; base_url="${base_url%%\?*}" ;;
+esac
+while [ "${base_url%/}" != "$base_url" ]; do base_url="${base_url%/}"; done
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 case "$t3_home" in
   /*) ;;
@@ -216,7 +222,7 @@ else
   printf '  %sInstalling%s T3 Code %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
   step "Downloading..."
   fetch_status=0
-  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
+  fetch "${base_url}/v${version}/SHA256SUMS${base_query}" "${staging}/SHA256SUMS" || fetch_status=$?
   if [ "$fetch_status" -eq 44 ]; then
     fail "t3 ${version} has no release archive for ${platform}-${arch}; releases before the self-contained CLI can only be installed with \`npm install -g t3@${version}\`"
   elif [ "$fetch_status" -ne 0 ]; then
@@ -224,7 +230,7 @@ else
   fi
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
   [ -n "$expected" ] || fail "t3 ${version} has no release archive for ${platform}-${arch}"
-  download "${base_url}/v${version}/${archive}" "${staging}/${archive}"
+  download "${base_url}/v${version}/${archive}${base_query}" "${staging}/${archive}"
 
   step "Verifying the download..."
   actual="$(checksum "${staging}/${archive}")"

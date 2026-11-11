@@ -186,11 +186,30 @@ describe("ssh tunnel scripts", () => {
   });
 
   it.each([
-    { host: "Darwin x86_64", system: "Darwin", machine: "x86_64", downloads: false },
-    { host: "Darwin arm64", system: "Darwin", machine: "arm64", downloads: true },
+    {
+      host: "Darwin x86_64",
+      system: "Darwin",
+      machine: "x86_64",
+      downloads: false,
+      releaseBaseUrl: undefined,
+    },
+    {
+      host: "Darwin arm64",
+      system: "Darwin",
+      machine: "arm64",
+      downloads: true,
+      releaseBaseUrl: undefined,
+    },
+    {
+      host: "Darwin arm64 with signed mirror",
+      system: "Darwin",
+      machine: "arm64",
+      downloads: true,
+      releaseBaseUrl: "https://updates.example.com/t3code/?token=abc&scope=t3",
+    },
   ])(
     "only downloads a release archive the host can run: $host",
-    ({ system, machine, downloads }) => {
+    ({ system, machine, downloads, releaseBaseUrl }) => {
       const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
       try {
         const bin = NodePath.join(root, "bin");
@@ -203,11 +222,17 @@ describe("ssh tunnel scripts", () => {
         );
         NodeFS.writeFileSync(
           NodePath.join(bin, "curl"),
-          "#!/bin/sh\necho 'download attempt' >&2\nexit 22\n",
+          "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$HOME/download-args\"\necho 'download attempt' >&2\nexit 22\n",
           { mode: 0o755 },
         );
         const runner = NodePath.join(root, "run-t3.sh");
-        NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+        NodeFS.writeFileSync(
+          runner,
+          SshTunnel.buildRemoteT3RunnerScript({
+            ...ARCHIVE,
+            ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+          }),
+        );
         const result = NodeChildProcess.spawnSync("sh", [runner, "--version"], {
           encoding: "utf8",
           env: { HOME: NodePath.join(root, "home"), PATH: `${bin}:${process.env.PATH ?? ""}` },
@@ -215,6 +240,13 @@ describe("ssh tunnel scripts", () => {
         assert.notEqual(result.status, 0);
         if (downloads) {
           assert.include(result.stderr, "download attempt");
+          const expectedUrl = releaseBaseUrl
+            ? `https://updates.example.com/t3code/v${ARCHIVE.archiveVersion}/SHA256SUMS?token=abc&scope=t3`
+            : `https://github.com/pingdotgg/t3code/releases/download/v${ARCHIVE.archiveVersion}/SHA256SUMS`;
+          assert.include(
+            NodeFS.readFileSync(NodePath.join(root, "home/download-args"), "utf8"),
+            expectedUrl,
+          );
         } else {
           assert.notInclude(result.stderr, "download attempt");
           assert.include(result.stderr, "has no t3 release archive.");

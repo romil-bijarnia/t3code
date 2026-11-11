@@ -63,10 +63,17 @@ async function download(url, file) {
 
 async function install(dir, key) {
   const archive = `t3-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
-  const base = (
-    process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/pingdotgg/t3code/releases/download"
-  ).replace(/\/+$/, "");
-  const sums = await (await get(`${base}/v${version}/SHA256SUMS`)).text();
+  const base = new URL(
+    process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/pingdotgg/t3code/releases/download",
+  );
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}/v${version}/`;
+  base.hash = "";
+  const assetUrl = (name) => {
+    const url = new URL(base);
+    url.pathname += name;
+    return url.href;
+  };
+  const sums = await (await get(assetUrl("SHA256SUMS"))).text();
   const expected = /^([0-9a-f]{64})\s+\*?(.+)$/im;
   const line = sums
     .split(/\r?\n/)
@@ -79,7 +86,7 @@ async function install(dir, key) {
   const staging = fs.mkdtempSync(`${dir}.staging-`);
   try {
     const file = path.join(staging, archive);
-    if ((await download(`${base}/v${version}/${archive}`, file)) !== line[1].toLowerCase()) {
+    if ((await download(assetUrl(archive), file)) !== line[1].toLowerCase()) {
       throw new Error(`checksum mismatch for ${archive}`);
     }
     // Windows' own tar.exe reads zip; a Git-for-Windows tar on PATH cannot.

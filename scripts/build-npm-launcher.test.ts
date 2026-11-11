@@ -76,9 +76,10 @@ exit 7
   const requests: Array<string> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/SHA256SUMS`) {
+    const url = new URL(request.url ?? "/", "http://fixture");
+    if (url.pathname === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
-    } else if (request.url === `/v${VERSION}/${archiveName}`) {
+    } else if (url.pathname === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
     } else {
       response.writeHead(404).end();
@@ -175,12 +176,27 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           ["--version|", `serve a b|${launcher}`, `--version|${launcher}`],
         );
 
+        const signedQuery = "?token=fixture%2Fsignature&mode=private";
+        const signed = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: {
+            ...env,
+            T3CODE_HOME: path.join(root, "signed-home"),
+            T3CODE_RELEASE_BASE_URL: `${release.baseUrl}/${signedQuery}#ignored`,
+          },
+        });
+        assert.equal(signed.exitCode, 0, signed.stderr);
+        assert.deepStrictEqual(release.requests.slice(requestsAfterFirst), [
+          `/v${VERSION}/SHA256SUMS${signedQuery}`,
+          `/v${VERSION}/t3-${VERSION}-${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}.tar.gz${signedQuery}`,
+        ]);
+
         yield* fs.writeFileString(path.join(versionDir, "t3"), "#!/t3-test-missing-loader\n");
         for (const _attempt of [1, 2]) {
           const cached = yield* run(process.execPath, [launcher, "serve"], { cwd: root, env });
           assert.equal(cached.exitCode, 1, cached.stderr);
           assert.include(cached.stderr, "could not run");
-          assert.equal(release.requests.length, requestsAfterFirst);
+          assert.equal(release.requests.length, requestsAfterFirst + 2);
           assert.equal(
             yield* fs.readFileString(path.join(versionDir, ".install-complete")),
             `${VERSION}\n`,
