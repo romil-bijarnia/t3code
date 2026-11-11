@@ -28,6 +28,7 @@ const fixture = (
   let finalized = 0;
   const requests: string[] = [];
   const headers: Array<Readonly<Record<string, string>>> = [];
+  const unexpectedOperation = Effect.die("Unexpected device operation");
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
@@ -45,7 +46,7 @@ const fixture = (
   const { handler, dispose } = HttpRouter.toWebHandler(
     DeviceHubProxy.layer.pipe(
       Layer.provideMerge(
-        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
           authenticateWebSocketUpgrade: () =>
             authError
               ? Effect.fail(authError)
@@ -55,17 +56,40 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
-        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        }),
       ),
       Layer.provideMerge(
-        Layer.succeed(DeviceService.DeviceService, {
+        Layer.mock(DeviceService.DeviceService)({
           currentReadiness: () =>
             Effect.succeed({
               hostId: LOCAL_DEVICE_HOST_ID,
+              nodePath: "node",
               hub: { origin: "http://hub.test" },
+              devices: {
+                list: unexpectedOperation,
+                boot: () => unexpectedOperation,
+                attach: () => unexpectedOperation,
+                shutdown: () => unexpectedOperation,
+                screenshot: () => unexpectedOperation,
+              },
+              run: () => unexpectedOperation,
+              helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
-        } as DeviceService.DeviceService["Service"]),
+          screenshot: () =>
+            Effect.succeed({
+              device: {
+                hostId: LOCAL_DEVICE_HOST_ID,
+                id: "udid-1",
+                platform: "ios",
+                name: "Phone",
+                version: "27.0",
+                booted: true,
+                physical: false,
+              },
+              png: new Uint8Array([137, 80, 78, 71]),
+            }),
+        }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
     ),
@@ -239,6 +263,26 @@ describe("device hub proxy", () => {
     ).toBe(404);
     expect(requests).toEqual([]);
   });
+
+  it.each(["serve-sim", "serve-emu"])(
+    "captures %s screenshots through hosts with their own stream routing",
+    async (vendor) => {
+      const { handler, requests } = fixture([AuthOrchestrationReadScope], false, undefined, () =>
+        Effect.succeed(null),
+      );
+      const response = await handler(
+        new Request(`http://t3.test/api/device-hub/vendor/${vendor}/api/screenshot?device=udid-1`, {
+          method: "POST",
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        new Uint8Array([137, 80, 78, 71]),
+      );
+      expect(requests).toEqual([]);
+    },
+  );
 });
 
 it.each([
