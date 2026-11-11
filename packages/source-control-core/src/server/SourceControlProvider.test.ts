@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { parseGitRemoteHost } from "../shared/definition.ts";
 
 import {
   repositoryPathFromRemoteUrl,
@@ -20,6 +21,14 @@ it.each([
   ["gitlab.com:T3Tools/platform/t3code", "T3Tools/platform/t3code"],
   ["https://github.com/T3Tools/t3code.git", "T3Tools/t3code"],
   ["C:/repos/t3code", null],
-])("reads the repository path of %s", (remoteUrl, expected) => {
-  assert.strictEqual(repositoryPathFromRemoteUrl(remoteUrl), expected);
-});
+  ["git@[2001:db8::1]:T3Tools/t3code.git", "T3Tools/t3code", "[2001:db8::1]"],
+  ["[2001:db8::1]:T3Tools/t3code.git", "T3Tools/t3code", "[2001:db8::1]"],
+])(
+  "reads the repository path of %s",
+  (remoteUrl, expected, expectedHost: string | undefined = undefined) => {
+    assert.strictEqual(repositoryPathFromRemoteUrl(remoteUrl), expected);
+    if (expectedHost !== undefined) {
+      assert.strictEqual(parseGitRemoteHost(remoteUrl)?.host, expectedHost);
+    }
+  },
+);

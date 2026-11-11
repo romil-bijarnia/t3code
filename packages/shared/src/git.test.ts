@@ -48,6 +48,13 @@ describe("normalizeGitRemoteUrl", () => {
   });
 
   it("normalizes SCP-like remotes with non-git SSH users", () => {
+    for (const remote of [
+      "git@[2001:db8::1]:owner/repo.git",
+      "[2001:db8::1]:owner/repo.git",
+      "ssh://git@[2001:db8::1]/owner/repo.git",
+    ]) {
+      expect(normalizeGitRemoteUrl(remote)).toBe("[2001:db8::1]/owner/repo");
+    }
     expect(normalizeGitRemoteUrl("gitlab@gitlab.example.com:group/project.git")).toBe(
       "gitlab.example.com/group/project",
     );
