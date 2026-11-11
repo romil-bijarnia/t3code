@@ -242,7 +242,7 @@ describe("DesktopConnectionCatalogStore", () => {
     ),
   );
 
-  it.effect("sets malformed catalog documents aside and starts empty", () =>
+  it.effect("sets malformed catalogs aside without restoring removed legacy connections", () =>
     withStore(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -251,6 +251,25 @@ describe("DesktopConnectionCatalogStore", () => {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
         const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          yield* encodeLegacySavedEnvironments({
+            version: 1,
+            records: [
+              {
+                environmentId: "removed-environment",
+                label: "Previously removed",
+                httpBaseUrl: "https://old.example.com/",
+                wsBaseUrl: "wss://old.example.com/",
+                createdAt: "2026-06-01T00:00:00.000Z",
+                lastConnectedAt: null,
+                relayManaged: { relayUrl: "https://relay.example.com/" },
+              },
+            ],
+          }),
+        );
+        assert.isTrue(Option.isSome(yield* store.get));
+        yield* store.set('{"schemaVersion":1,"targets":[]}');
         yield* fileSystem.writeFileString(catalogPath, "{not-json");
 
         assert.deepStrictEqual(yield* store.get, Option.none());
@@ -263,6 +282,9 @@ describe("DesktopConnectionCatalogStore", () => {
           "{not-json",
         );
         assert.isFalse(yield* fileSystem.exists(catalogPath));
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        const restarted = yield* DesktopConnectionCatalogStore.make;
+        assert.deepStrictEqual(yield* restarted.get, Option.none());
       }),
     ),
   );

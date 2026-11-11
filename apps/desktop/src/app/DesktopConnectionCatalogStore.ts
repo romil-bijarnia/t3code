@@ -497,6 +497,19 @@ export const make = Effect.gen(function* () {
         return Option.none<string>();
       }
       if (Option.isNone(document)) {
+        const files = yield* fileSystem
+          .readDirectory(environment.stateDir)
+          .pipe(
+            Effect.catch((cause) =>
+              cause.reason._tag === "NotFound"
+                ? Effect.succeed([])
+                : Effect.fail(new DesktopConnectionCatalogStoreReadError({ catalogPath, cause })),
+            ),
+          );
+        // Quarantine must suppress legacy migration on later reads and after restart too.
+        if (files.some((name) => name.startsWith("connection-catalog.json.corrupt-"))) {
+          return Option.none<string>();
+        }
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {
