@@ -229,46 +229,64 @@ it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 )("static HTTP responses", (it) => {
-  it.effect("revalidates non-HTML files and returns changed contents", () =>
+  it.effect.each(["app.js", "app with spaces.js", "café%20.js"])(
+    "revalidates non-HTML file %s and returns changed contents",
+    (fileName) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
+        const assetPath = path.join(staticDir, fileName);
+        const resource = `/${encodeURIComponent(fileName)}`;
+        yield* fs.writeFileString(assetPath, 'export const build = "first";');
+        const request = yield* makeStaticRequest(staticDir);
+
+        const initial = yield* request(resource);
+        expect(initial.status).toBe(200);
+        expect(yield* initial.text).toContain("first");
+        const etag = initial.headers["etag"]!;
+        const lastModified = initial.headers["last-modified"]!;
+        expect(etag).toBeTruthy();
+        expect(lastModified).toBeTruthy();
+        for (const headers of [
+          { "if-none-match": etag },
+          { "if-none-match": etag.replace(/^W\//, "") },
+          { "if-none-match": `"other", ${etag}` },
+          { "if-none-match": "*" },
+          { "if-modified-since": lastModified },
+        ]) {
+          const response = yield* request(resource, { headers });
+          expect(response.status).toBe(304);
+          expect(response.headers["etag"]).toBe(etag);
+          expect(response.headers["cache-control"]).toBe("no-cache");
+          expect(yield* response.text).toBe("");
+        }
+        const mismatched = yield* request(resource, {
+          headers: { "if-none-match": '"another-build"', "if-modified-since": lastModified },
+        });
+        expect(mismatched.status).toBe(200);
+        expect(yield* mismatched.text).toContain("first");
+
+        yield* fs.writeFileString(assetPath, 'export const build = "the next build";');
+        const changed = yield* request(resource, { headers: { "if-none-match": etag } });
+        expect(changed.status).toBe(200);
+        expect(changed.headers["etag"]).not.toBe(etag);
+        expect(yield* changed.text).toContain("next build");
+      }),
+  );
+
+  it.effect.each([
+    ["/%", 404],
+    ["/%C3%28", 404],
+    ["/%00.js", 400],
+    ["/..%2fsecret.txt", 400],
+  ] as const)("rejects invalid encoded static path %s", ([resource, status]) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-cache-" });
-      const assetPath = path.join(staticDir, "app.js");
-      yield* fs.writeFileString(assetPath, 'export const build = "first";');
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-path-" });
       const request = yield* makeStaticRequest(staticDir);
-
-      const initial = yield* request("/app.js");
-      expect(initial.status).toBe(200);
-      expect(yield* initial.text).toContain("first");
-      const etag = initial.headers["etag"]!;
-      const lastModified = initial.headers["last-modified"]!;
-      expect(etag).toBeTruthy();
-      expect(lastModified).toBeTruthy();
-      for (const headers of [
-        { "if-none-match": etag },
-        { "if-none-match": etag.replace(/^W\//, "") },
-        { "if-none-match": `"other", ${etag}` },
-        { "if-none-match": "*" },
-        { "if-modified-since": lastModified },
-      ]) {
-        const response = yield* request("/app.js", { headers });
-        expect(response.status).toBe(304);
-        expect(response.headers["etag"]).toBe(etag);
-        expect(response.headers["cache-control"]).toBe("no-cache");
-        expect(yield* response.text).toBe("");
-      }
-      const mismatched = yield* request("/app.js", {
-        headers: { "if-none-match": '"another-build"', "if-modified-since": lastModified },
-      });
-      expect(mismatched.status).toBe(200);
-      expect(yield* mismatched.text).toContain("first");
-
-      yield* fs.writeFileString(assetPath, 'export const build = "the next build";');
-      const changed = yield* request("/app.js", { headers: { "if-none-match": etag } });
-      expect(changed.status).toBe(200);
-      expect(changed.headers["etag"]).not.toBe(etag);
-      expect(yield* changed.text).toContain("next build");
+      const response = yield* request(resource);
+      expect(response.status).toBe(status);
     }),
   );
 
