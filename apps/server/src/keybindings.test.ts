@@ -320,38 +320,44 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
-  it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
-    const messages: string[] = [];
-    const logger = Logger.make(({ message }) => {
-      messages.push(String(message));
-    });
-
-    return Effect.gen(function* () {
-      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "script.custom-action.run" },
-      ]);
-
-      yield* Effect.gen(function* () {
-        const keybindings = yield* Keybindings.Keybindings;
-        yield* keybindings.syncDefaultKeybindingsOnStartup;
+  it.effect.each([
+    { key: "mod+j", when: undefined, defaultCommand: "terminal.toggle" },
+    { key: "mod+t", when: "rightPanelOpen&&!terminalFocus", defaultCommand: "rightPanel.new" },
+  ])(
+    "skips conflicting default $key on startup and logs a detailed warning",
+    ({ key, when, defaultCommand }) => {
+      const messages: string[] = [];
+      const logger = Logger.make(({ message }) => {
+        messages.push(String(message));
       });
 
-      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
-      assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
+      return Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key, command: "script.custom-action.run", ...(when === undefined ? {} : { when }) },
+        ]);
 
-      assert.isTrue(
-        messages.some((message) =>
-          message.includes("skipping default keybinding due to shortcut conflict"),
+        yield* Effect.gen(function* () {
+          const keybindings = yield* Keybindings.Keybindings;
+          yield* keybindings.syncDefaultKeybindingsOnStartup;
+        });
+
+        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+        assert.isFalse(persisted.some((entry) => entry.command === defaultCommand));
+        assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
+
+        assert.isTrue(
+          messages.some((message) =>
+            message.includes("skipping default keybinding due to shortcut conflict"),
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layerKeybindings(), Logger.layer([logger], { mergeWithExisting: false })),
         ),
       );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(layerKeybindings(), Logger.layer([logger], { mergeWithExisting: false })),
-      ),
-    );
-  });
+    },
+  );
 
   it.effect("appends additional custom keybindings for the same command", () =>
     Effect.gen(function* () {
