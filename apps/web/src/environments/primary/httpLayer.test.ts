@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { HttpClient } from "effect/http";
 
-import { __resetDesktopPrimaryAuthForTests } from "./desktopAuth";
+import { __resetDesktopPrimaryAuthForTests, readDesktopPrimaryBearerToken } from "./desktopAuth";
 import * as PrimaryEnvironmentHttpLayer from "./httpLayer";
 
 function createSignal<A>() {
@@ -47,6 +47,7 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
   it.effect("uses bearer auth without cookies for desktop-managed primaries", () => {
     const requested = createSignal<void>();
     const bearerToken = createSignal<string>();
+    let currentBearerToken = bearerToken.promise;
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     Object.defineProperty(globalThis, "window", {
@@ -62,11 +63,13 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
           }),
           getLocalEnvironmentBearerToken: () => {
             requested.resolve(undefined);
-            return bearerToken.promise;
+            return currentBearerToken;
           },
         } as unknown as DesktopBridge,
       },
     });
+    const pendingToken = readDesktopPrimaryBearerToken();
+    expect(readDesktopPrimaryBearerToken()).toBe(pendingToken);
 
     return Effect.gen(function* () {
       const requestFiber = yield* HttpClient.get(
@@ -80,6 +83,11 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
       const request = new Request(fetchMock.mock.calls[0]?.[0], fetchMock.mock.calls[0]?.[1]);
       expect(request.credentials).not.toBe("include");
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
+
+      currentBearerToken = Promise.resolve("renewed-desktop-bearer-token");
+      yield* HttpClient.get("http://127.0.0.1:3773/api/connect/link-state");
+      const renewed = new Request(fetchMock.mock.calls[1]?.[0], fetchMock.mock.calls[1]?.[1]);
+      expect(renewed.headers.get("authorization")).toBe("Bearer renewed-desktop-bearer-token");
     }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()));
   });
 });

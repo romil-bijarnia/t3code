@@ -39,7 +39,7 @@ const config = {
 };
 
 describe("DesktopLocalEnvironmentAuth", () => {
-  it.effect("exchanges the desktop bootstrap credential only once", () =>
+  it.effect("shares one bootstrap exchange until its bearer expires, then renews on demand", () =>
     Effect.gen(function* () {
       const requestCount = yield* Ref.make(0);
       const waiting = yield* Deferred.make<void>();
@@ -47,13 +47,13 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const layerHttpClient = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Ref.update(requestCount, (count) => count + 1).pipe(
-            Effect.as(
+          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+            Effect.map((count) =>
               HttpClientResponse.fromWeb(
                 request,
                 new Response(
                   JSON.stringify({
-                    access_token: "desktop-bearer-token",
+                    access_token: `desktop-bearer-token-${count}`,
                     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
                     token_type: "Bearer",
                     expires_in: 3600,
@@ -84,21 +84,26 @@ describe("DesktopLocalEnvironmentAuth", () => {
         Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
       );
 
-      const [first, second] = yield* Effect.gen(function* () {
+      const { initial, renewed } = yield* Effect.gen(function* () {
         const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
-        const tokens = yield* Effect.all([auth.getBearerToken, auth.getBearerToken]).pipe(
-          Effect.forkChild,
-        );
+        const tokens = yield* Effect.all([auth.getBearerToken, auth.getBearerToken], {
+          concurrency: "unbounded",
+        }).pipe(Effect.forkChild);
         yield* Deferred.await(waiting);
         yield* TestClock.adjust(Duration.seconds(16));
         assert.strictEqual(yield* Ref.get(requestCount), 0);
         yield* Deferred.succeed(ready, true);
-        return yield* Fiber.join(tokens);
+        const initial = yield* Fiber.join(tokens);
+        yield* TestClock.adjust(Duration.seconds(3600));
+        const renewed = yield* Effect.all([auth.getBearerToken, auth.getBearerToken], {
+          concurrency: "unbounded",
+        });
+        return { initial, renewed };
       }).pipe(Effect.provide(layerTest));
 
-      assert.strictEqual(first, "desktop-bearer-token");
-      assert.strictEqual(second, "desktop-bearer-token");
-      assert.strictEqual(yield* Ref.get(requestCount), 1);
+      assert.deepEqual(initial, ["desktop-bearer-token-1", "desktop-bearer-token-1"]);
+      assert.deepEqual(renewed, ["desktop-bearer-token-2", "desktop-bearer-token-2"]);
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
