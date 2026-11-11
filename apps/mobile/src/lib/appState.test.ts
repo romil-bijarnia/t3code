@@ -36,10 +36,20 @@ describe("reduce motion store", () => {
     unsubscribeAgain();
   });
 
-  it("ignores a seed that resolves after the last unsubscribe", async () => {
+  it("ignores a seed that resolves after the last unsubscribe or a newer native change", async () => {
     native.enabled = false;
     subscribeReduceMotion(() => undefined)();
     await Promise.resolve();
     expect(readReduceMotionEnabled()).toBe(true);
+
+    const unsubscribe = subscribeReduceMotion(() => undefined);
+    try {
+      for (const listener of native.listeners) listener(true);
+      expect(readReduceMotionEnabled()).toBe(true);
+      await Promise.resolve();
+      expect(readReduceMotionEnabled()).toBe(true);
+    } finally {
+      unsubscribe();
+    }
   });
 });

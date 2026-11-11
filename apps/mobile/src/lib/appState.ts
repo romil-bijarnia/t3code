@@ -52,16 +52,18 @@ function setReduceMotionEnabled(next: boolean) {
 export function subscribeReduceMotion(onChange: Listener): () => void {
   reduceMotionListeners.add(onChange);
   if (reduceMotionSubscription === null) {
-    const subscription = AccessibilityInfo.addEventListener(
-      "reduceMotionChanged",
-      setReduceMotionEnabled,
-    );
+    let receivedNativeChange = false;
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
+      receivedNativeChange = true;
+      setReduceMotionEnabled(enabled);
+    });
     reduceMotionSubscription = subscription;
-    // The native event only reports changes; seed the current value once per
-    // observation, and drop a seed that resolves after observation stopped.
+    // The native event only reports changes; seed once per observation, but never
+    // let a late seed overwrite a newer event or a stopped observation.
     void AccessibilityInfo.isReduceMotionEnabled().then(
       (enabled) => {
-        if (reduceMotionSubscription === subscription) setReduceMotionEnabled(enabled);
+        if (reduceMotionSubscription === subscription && !receivedNativeChange)
+          setReduceMotionEnabled(enabled);
       },
       () => undefined,
     );
