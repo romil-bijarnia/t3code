@@ -13,6 +13,7 @@ import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
+import { PullRequestMutationsGraphQLGroup } from "./pullRequestMutations.graphql.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 
 const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
@@ -93,6 +94,71 @@ const readStats = (host: string, number = 7) =>
 const stats = { additions: 3, deletions: 1 };
 
 describe("GitHubGraphQlAuth", () => {
+  it.effect.each(["FORBIDDEN", "NOT_FOUND"])(
+    "does not replay a mutation after %s in a returned field",
+    (type) => {
+      const { layer, requests } = harness(
+        (request) =>
+          request.headers["authorization"] === "Bearer app-token"
+            ? json({
+                data: { addComment: { clientMutationId: null } },
+                errors: [
+                  {
+                    type,
+                    message: "The returned field is unavailable.",
+                    path: ["addComment", "clientMutationId"],
+                  },
+                ],
+              })
+            : json({ data: { addComment: { clientMutationId: null } } }),
+        { appToken: "app-token" },
+      );
+      return Effect.gen(function* () {
+        const client = yield* GraphQLClient.make(
+          PullRequestMutationsGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        const result = yield* Effect.result(
+          client
+            .AddComment({ subjectId: "subject", body: "One comment" })
+            .pipe(GitHubGraphQlClient.call({ host: "github.com", operation: "comment" })),
+        );
+        expect(result._tag).toBe("Failure");
+        expect(requests.map((request) => request.headers["authorization"])).toEqual([
+          "Bearer app-token",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "retains credential fallback when the GraphQL endpoint refuses the whole request",
+    () => {
+      let successfulMutations = 0;
+      const { layer, requests } = harness(
+        (request) => {
+          if (request.headers["authorization"] === "Bearer app-token")
+            return json({ message: "Not Found" }, { status: 404 });
+          successfulMutations++;
+          return json({ data: { addComment: { clientMutationId: null } } });
+        },
+        { appToken: "app-token" },
+      );
+      return Effect.gen(function* () {
+        const client = yield* GraphQLClient.make(
+          PullRequestMutationsGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        yield* client
+          .AddComment({ subjectId: "subject", body: "One comment" })
+          .pipe(GitHubGraphQlClient.call({ host: "github.com", operation: "comment" }));
+        expect(requests.map((request) => request.headers["authorization"])).toEqual([
+          "Bearer app-token",
+          "Bearer secret",
+        ]);
+        expect(successfulMutations).toBe(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("asks again with the user's own credential when the app token gets NOT_FOUND", () => {
     const { layer, requests } = harness(
       (request) =>

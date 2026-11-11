@@ -58,7 +58,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
     Effect.gen(function* () {
       const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
       return GitHubGraphQlAuth.of({
-        execute: Effect.fn("GitHubGraphQlAuth.execute")(function* ({ request, next }) {
+        execute: Effect.fn("GitHubGraphQlAuth.execute")(function* ({ operation, request, next }) {
           const target = yield* GitHubGraphQlTarget;
           const host = normalizeHost(target.host);
           yield* Effect.annotateCurrentSpan({
@@ -82,9 +82,12 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
-                  const withheld = (answer.errors ?? []).some(
-                    (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
-                  );
+                  // A mutation can commit before a returned field fails, so never replay that answer.
+                  const withheld =
+                    operation.kind === "query" &&
+                    (answer.errors ?? []).some(
+                      (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
+                    );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
                     : {
