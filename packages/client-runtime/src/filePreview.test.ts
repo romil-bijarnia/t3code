@@ -4,17 +4,20 @@ import { readFilePreviewResponse } from "./filePreview.ts";
 
 describe("readFilePreviewResponse", () => {
   it("cancels a pending read when its preview closes", async () => {
-    const controller = new AbortController();
-    let cancelled = false;
-    const body = new ReadableStream<Uint8Array>({
-      cancel() {
-        cancelled = true;
-      },
-    });
-    const result = readFilePreviewResponse(new Response(body), controller.signal);
-    controller.abort();
-    await expect(result).rejects.toThrow();
-    expect(cancelled).toBe(true);
+    for (const closedBeforeRead of [false, true]) {
+      const controller = new AbortController();
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      });
+      if (closedBeforeRead) controller.abort();
+      const result = readFilePreviewResponse(new Response(body), controller.signal);
+      if (!closedBeforeRead) controller.abort();
+      await expect(result).rejects.toThrow();
+      expect(cancelled).toBe(true);
+    }
   });
   it("supports native AbortSignal implementations without throwIfAborted", async () => {
     const signal = new AbortController().signal;

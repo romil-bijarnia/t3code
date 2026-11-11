@@ -10,7 +10,10 @@ export async function readFilePreviewResponse(
     void response.body?.cancel().catch(() => undefined);
     throw new Error("The file could not be loaded. Reconnect and try again.");
   }
-  if (signal.aborted) throw new Error("Preview cancelled.");
+  if (signal.aborted) {
+    void response.body?.cancel().catch(() => undefined);
+    throw new Error("Preview cancelled.");
+  }
   const limit = FILE_TEXT_PREVIEW_MAX_BYTES + 1;
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Streaming file previews are unavailable in this runtime.");
