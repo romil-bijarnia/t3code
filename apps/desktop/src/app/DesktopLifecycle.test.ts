@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -227,12 +228,36 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("relaunches without the app link that launched it", () =>
+  it.effect.each([
+    {
+      target: "the executable",
+      executable: "/opt/T3 Code/t3code",
+      appImage: null,
+      launcher: null,
+      expected: "/opt/T3 Code/t3code",
+    },
+    {
+      target: "the AppImage",
+      executable: "/tmp/.mount_T3Code/t3code",
+      appImage: "/home/test/T3-Code.AppImage",
+      launcher: null,
+      expected: "/home/test/T3-Code.AppImage",
+    },
+    {
+      target: "the configured launcher",
+      executable: "/tmp/.mount_T3Code/t3code",
+      appImage: "/home/test/T3-Code.AppImage",
+      launcher: "/home/test/bin/t3code",
+      expected: "/home/test/bin/t3code",
+    },
+  ])("relaunches through $target without the app link that launched it", (input) =>
     Effect.gen(function* () {
       const relaunched = yield* Deferred.make<Electron.RelaunchOptions>();
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
         platform: "linux",
         isDevelopment: false,
+        appImagePath: Option.fromNullishOr(input.appImage),
+        desktopLauncherPath: Option.fromNullishOr(input.launcher),
       } as DesktopEnvironment.DesktopEnvironment["Service"]);
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(
@@ -258,16 +283,16 @@ describe("DesktopLifecycle", () => {
         return yield* Deferred.await(relaunched);
       }).pipe(
         Effect.provide(layer),
-        Effect.provideService(HostProcess.ExecutablePath, "/opt/T3 Code/t3code"),
+        Effect.provideService(HostProcess.ExecutablePath, input.executable),
         Effect.provideService(HostProcess.Arguments, [
-          "/opt/T3 Code/t3code",
+          input.executable,
           "--no-sandbox",
           "T3CODE://pair?token=spent",
           "t3code://new?prompt=hello",
         ]),
       );
 
-      assert.deepEqual(options, { execPath: "/opt/T3 Code/t3code", args: ["--no-sandbox"] });
+      assert.deepEqual(options, { execPath: input.expected, args: ["--no-sandbox"] });
     }),
   );
 
