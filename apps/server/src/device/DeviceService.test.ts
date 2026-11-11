@@ -1586,8 +1586,19 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-reconcile-" });
     const settings = yield* ServerSettings.ServerSettingsService;
+    let settingsUnavailable = false;
     // Each change is acknowledged after reconciliation consumed it, so no-ops are observable.
     const changes = yield* Queue.unbounded<{ value: Settings; done: Deferred.Deferred<void> }>();
+    const host: SshDeviceHostConfig = {
+      kind: "ssh",
+      id: "remote",
+      label: "Remote",
+      target: "remote-fixture",
+    };
+    const seedConsumed = yield* Deferred.make<void>();
+    const previous = yield* settings.updateSettings({ deviceHosts: [host] });
+    yield* settings.updateSettings({ deviceHosts: [] });
+    yield* Queue.offer(changes, { value: previous, done: seedConsumed });
     const removedFiles: string[] = [];
     const localHost: DeviceHost.DeviceHost["Service"] = {
       id: LOCAL_DEVICE_HOST_ID,
@@ -1611,6 +1622,11 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       Effect.provideService(DeviceHost.DeviceHost, localHost),
       Effect.provideService(ServerSettings.ServerSettingsService, {
         ...settings,
+        getSettings: Effect.suspend(() =>
+          settingsUnavailable
+            ? Effect.die("synthetic settings read failure")
+            : settings.getSettings,
+        ),
         subscribeChanges: Effect.succeed(
           Stream.fromQueue(changes).pipe(
             Stream.flatMap(({ value, done }) =>
@@ -1666,15 +1682,16 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       return yield* service.state;
     });
 
+    yield* Deferred.await(seedConsumed);
     const initial = yield* service.state;
+    expect(initial.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID]);
     expect(yield* update([])).toEqual(initial);
-
-    const host: SshDeviceHostConfig = {
-      kind: "ssh",
-      id: "remote",
-      label: "Remote",
-      target: "remote-fixture",
-    };
+    settingsUnavailable = true;
+    const unreadableConsumed = yield* Deferred.make<void>();
+    yield* Queue.offer(changes, { value: yield* settings.getSettings, done: unreadableConsumed });
+    yield* Deferred.await(unreadableConsumed);
+    settingsUnavailable = false;
+    expect(yield* service.state).toEqual(initial);
     const added = yield* update([host]);
     expect(added.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID, host.id]);
     expect(yield* update([{ ...host }])).toEqual(added);

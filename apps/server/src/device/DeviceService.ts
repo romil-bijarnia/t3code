@@ -1564,7 +1564,14 @@ export const make = Effect.gen(function* () {
   };
   yield* reconcile(configuredHosts(yield* settings.getSettings));
   yield* changes.pipe(
-    Stream.runForEach((value) => reconcile(configuredHosts(value))),
+    Stream.runForEach(() =>
+      settings.getSettings.pipe(
+        Effect.flatMap((value) => reconcile(configuredHosts(value))),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Device host settings reconciliation failed", { cause }),
+        ),
+      ),
+    ),
     Effect.forkIn(scope),
   );
   yield* Effect.addFinalizer(() =>
