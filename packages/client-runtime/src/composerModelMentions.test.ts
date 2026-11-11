@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   collectComposerModelMentions,
@@ -85,10 +85,17 @@ describe("collectComposerModelMentions", () => {
     ["model:codex/gpt-6.1,model:claudeAgent/sonnet", ["codex/gpt-6.1", "claudeAgent/sonnet"]],
     ["model:codex/gpt-6.1's output", ["codex/gpt-6.1"]],
     ["model:opencode/foo(bar)", ["opencode/foo(bar)"]],
+    ["(model:codex/GPT-6.1-Sol[1m]).", ["codex/GPT-6.1-Sol[1m]"]],
+    ["model:codex/gpt-6.1" + ")".repeat(128), ["codex/gpt-6.1"]],
   ])("bounds the reference in %s", (text, expected) => {
-    expect(
-      collectComposerModelMentions(text).map(({ instanceId, model }) => `${instanceId}/${model}`),
-    ).toEqual(expected);
+    let rescans = 0;
+    {
+      using split = vi.spyOn(String.prototype, "split");
+      const mentions = collectComposerModelMentions(text);
+      rescans = split.mock.calls.length;
+      expect(mentions.map(({ instanceId, model }) => `${instanceId}/${model}`)).toEqual(expected);
+    }
+    expect(rescans).toBeLessThanOrEqual(8);
   });
 
   it.each(["remodel:codex/gpt", "model:codex", "model:/gpt", "model:codex/.", "model:1x/gpt"])(
