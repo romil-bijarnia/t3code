@@ -6,6 +6,7 @@ import {
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
+import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { useRouter } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
@@ -201,6 +202,14 @@ export function DesktopWebLinkCoordinator() {
   });
 
   const openLink = useEffectEvent(async (url: string) => {
+    const authReturn = providerAuthReturnUrl(url);
+    if (authReturn !== undefined) {
+      const target = new URL(authReturn);
+      if (target.protocol === "t3code:" || target.protocol === "t3code-dev:") {
+        await router.navigate({ href: target.pathname + target.search + target.hash });
+        return;
+      }
+    }
     const pairingUrl = readPairingAppLink(url);
     if (pairingUrl !== null) {
       await pairFromLink(pairingUrl);

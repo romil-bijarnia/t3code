@@ -185,6 +185,21 @@ async function mount(...urls: string[]) {
   return stack.move();
 }
 
+it.each([
+  [
+    "t3code://app/settings/providers?environmentId=remote&instanceId=codex&token=private",
+    "/settings/providers?environmentId=remote&instanceId=codex",
+  ],
+  ["t3code-dev://app/welcome?token=private#agents:codex_dev", "/welcome#agents:codex_dev"],
+])("returns a queued provider sign-in link to its app route: %s", async (url, href) => {
+  setup();
+  await using _coordinator = await mount(url);
+  await vi.waitFor(() => expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href }));
+  expect(state.openScratchProject).not.toHaveBeenCalled();
+  expect(state.preview).not.toHaveBeenCalled();
+  expect(state.openLink).not.toHaveBeenCalled();
+});
+
 it("holds a launch PR link until project discovery settles, then opens the PR view", async () => {
   setup();
   await using _coordinator = await mount(pullRequestUrl);

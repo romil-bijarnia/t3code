@@ -195,18 +195,7 @@ export const make = Effect.gen(function* () {
         const destination = providerAuthReturnUrl(value);
         const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
         if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
-        void runPromise(
-          Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isNone(mainWindow)) return;
-            yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not return to provider setup", cause),
-            ),
-          ),
-        );
+        void runPromise(webLinks.receive(destination));
         return true;
       };
       const openAppLink = (value: string | undefined) => {
@@ -216,7 +205,10 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const args = yield* HostProcess.Arguments;
-      args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
+      args.some(
+        (value) =>
+          startProviderAuthHandoff(value) || resumeProviderAuth(value) || openAppLink(value),
+      );
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.isWebLink(url)) return false;
         void runPromise(webLinks.receive(url));

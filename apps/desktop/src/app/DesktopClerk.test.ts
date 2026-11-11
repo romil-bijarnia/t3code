@@ -294,49 +294,75 @@ describe("DesktopClerk", () => {
   );
 });
 
-it.effect(
-  "provider auth deep links navigate and reveal the running desktop without handling Clerk URLs",
-  () => {
+it.effect.each(["startup", "open-url", "early-second-instance", "second-instance"] as const)(
+  "queues provider auth deep links before the main window exists (%s)",
+  (entryPoint) => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
     const listeners = new Map<string, (...args: unknown[]) => void>();
-    const revealed = Promise.withResolvers<void>();
-    const loadURL = vi.fn(async (_url: string) => undefined);
-    const window = { loadURL };
+    const received: string[] = [];
+    const destination = "t3code-dev://app/settings/providers?instanceId=work&code=never-forward";
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
         Effect.sync(() => {
           listeners.set(name, listener);
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
-    const electronWindow = {
-      currentMainOrFirst: Effect.succeedSome(window),
-      reveal: () => Effect.sync(() => revealed.resolve()),
-    } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
+      if (entryPoint === "early-second-instance") {
+        listeners.get("second-instance")!({}, ["t3", destination]);
+      }
       yield* clerk.configure;
       const event = { preventDefault: vi.fn() };
       listeners.get("open-url")!(event, "t3code-dev://app/auth/callback?code=clerk-code");
       listeners.get("open-url")!(event, "t3code://app/welcome");
-      assert.equal(loadURL.mock.calls.length, 0);
       assert.equal(event.preventDefault.mock.calls.length, 0);
-      listeners.get("second-instance")!({}, [
-        "t3",
-        "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
-      ]);
-      yield* Effect.promise(() => revealed.promise);
-      assert.deepEqual(loadURL.mock.calls, [
-        ["t3code-dev://app/settings/providers?instanceId=work"],
-      ]);
+      if (entryPoint === "open-url") listeners.get("open-url")!(event, destination);
+      if (entryPoint === "second-instance") {
+        listeners.get("second-instance")!({}, ["t3", destination]);
+      }
+      assert.deepEqual(received, ["t3code-dev://app/settings/providers?instanceId=work"]);
       listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
-      assert.equal(event.preventDefault.mock.calls.length, 1);
+      assert.deepEqual(received, [
+        "t3code-dev://app/settings/providers?instanceId=work",
+        "t3code-dev://app/welcome#agents:machine-id",
+      ]);
+      assert.equal(event.preventDefault.mock.calls.length, entryPoint === "open-url" ? 2 : 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
-      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
-      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      Effect.provideService(
+        ElectronWindow.ElectronWindow,
+        ElectronWindow.ElectronWindow.of({
+          create: () => Effect.die("unexpected window creation"),
+          main: Effect.succeedNone,
+          currentMainOrFirst: Effect.succeedNone,
+          focusedMainOrFirst: Effect.succeedNone,
+          setMain: () => Effect.void,
+          clearMain: () => Effect.void,
+          prepareReveal: () => Effect.succeed(false),
+          reveal: () => Effect.void,
+          sendAll: () => Effect.void,
+          destroyAll: Effect.void,
+          syncAllAppearance: () => Effect.void,
+        }),
+      ),
+      Effect.provideService(
+        DesktopWebLinks.DesktopWebLinks,
+        DesktopWebLinks.DesktopWebLinks.of({
+          receive: (url) =>
+            Effect.sync(() => {
+              received.push(url);
+            }),
+          setRendererReady: () => Effect.void,
+        }),
+      ),
+      Effect.provideService(
+        HostProcess.Arguments,
+        entryPoint === "startup" ? ["t3", destination] : ["t3"],
+      ),
     );
   },
 );
