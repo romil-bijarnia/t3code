@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   deleted: vi.fn(),
   download: vi.fn(),
   copy: vi.fn(),
+  write: vi.fn(),
   share: vi.fn(),
   shareFromSource: vi.fn(),
   available: vi.fn(),
@@ -56,6 +57,10 @@ vi.mock("expo-file-system", () => {
     async copy(destination: File): Promise<void> {
       await mocks.copy(this.uri, destination.uri);
     }
+
+    write(contents: Uint8Array): Promise<void> {
+      return mocks.write(this.uri, contents);
+    }
   }
 
   return { Directory, File, Paths: { cache: "file:///cache" } };
@@ -74,6 +79,7 @@ vi.mock("./shareFileFromSource", () => ({ shareFileFromSource: mocks.shareFromSo
 import {
   downloadAndShareAttachment,
   downloadAttachmentForPreview,
+  shareGeneratedAttachment,
   shareLocalAttachment,
 } from "./attachmentDownload";
 import { isForegroundHandoffActive } from "./foreground-handoff";
@@ -92,12 +98,14 @@ beforeEach(() => {
   mocks.deleted.mockReset();
   mocks.download.mockReset();
   mocks.copy.mockReset();
+  mocks.write.mockReset();
   mocks.share.mockReset();
   mocks.shareFromSource.mockReset();
   mocks.available.mockReset();
   mocks.uuid.mockReset();
   mocks.download.mockImplementation(async (_url: string, file: { uri: string }) => file);
   mocks.copy.mockResolvedValue(undefined);
+  mocks.write.mockResolvedValue(undefined);
   mocks.share.mockResolvedValue(undefined);
   mocks.shareFromSource.mockResolvedValue(undefined);
   mocks.available.mockResolvedValue(true);
@@ -231,6 +239,24 @@ describe("downloadAndShareAttachment", () => {
 });
 
 describe("attachment preview files", () => {
+  it("does not share generated attachments when writing the file fails", async () => {
+    const failure = new Error("Cache storage is full");
+    const write = Promise.reject(failure);
+    void write.catch(() => undefined);
+    mocks.write.mockReturnValue(write);
+
+    await expect(
+      shareGeneratedAttachment({
+        bytes: new Uint8Array([1, 2, 3]),
+        attachment: input.attachment,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBe(failure);
+
+    expect(mocks.share).not.toHaveBeenCalled();
+    expect(mocks.deleted).toHaveBeenCalledTimes(1);
+  });
+
   it("does not start a native request after cancellation during setup", async () => {
     const controller = new AbortController();
     const loading = downloadAttachmentForPreview({ ...input, signal: controller.signal });
