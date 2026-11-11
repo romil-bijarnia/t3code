@@ -444,8 +444,12 @@ export function createDeviceStreamClient(
   let rotationCursor: DeviceScreenSize["orientation"] | null = null;
   let pendingOrientation: { requestId: number } | null = null;
   let iceGatheringDeadlineMs = ICE_GATHERING_TIMEOUT_MS;
-  let peer: { connection: RTCPeerConnection; sessionId: string; video: HTMLVideoElement } | null =
-    null;
+  let peer: {
+    connection: RTCPeerConnection;
+    sessionId: string;
+    video: HTMLVideoElement;
+    release: () => void;
+  } | null = null;
   const duoControl = createDuoControl({
     send(request) {
       if (
@@ -882,6 +886,7 @@ export function createDeviceStreamClient(
     const current = peer;
     if (!current) return;
     peer = null;
+    current.release();
     current.connection.close();
     current.video.srcObject = null;
     current.video.remove();
@@ -919,7 +924,16 @@ export function createDeviceStreamClient(
     video.style.cssText =
       "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:0;top:0";
     document.body.append(video);
-    const current = { connection, sessionId: webRtcSessionId(), video };
+    const negotiation = new AbortController();
+    const current = {
+      connection,
+      sessionId: webRtcSessionId(),
+      video,
+      release: () => {
+        negotiation.abort();
+        clearWatchdog();
+      },
+    };
     peer = current;
     const isCurrent = () =>
       !stopped &&
@@ -982,18 +996,24 @@ export function createDeviceStreamClient(
     };
     try {
       await connection.setLocalDescription(await connection.createOffer());
+      if (!isCurrent()) return;
       const gathered = await new Promise<boolean>((resolve) => {
         if (connection.iceGatheringState === "complete") return resolve(true);
         const timer = setTimeout(() => done(false), iceGatheringDeadlineMs);
         function done(complete: boolean) {
           clearTimeout(timer);
           connection.removeEventListener("icegatheringstatechange", changed);
+          negotiation.signal.removeEventListener("abort", cancelled);
           resolve(complete);
         }
         function changed() {
           if (connection.iceGatheringState === "complete") done(true);
         }
+        function cancelled() {
+          done(false);
+        }
         connection.addEventListener("icegatheringstatechange", changed);
+        negotiation.signal.addEventListener("abort", cancelled, { once: true });
       });
       if (!isCurrent()) return;
       // serve-sim takes all candidates in the offer; later candidates never trickle.
@@ -1010,6 +1030,7 @@ export function createDeviceStreamClient(
       }
       const response = await fetch(webRtcUrl("offer"), {
         method: "POST",
+        signal: negotiation.signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           type: "offer",

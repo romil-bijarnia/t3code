@@ -561,8 +561,12 @@ describe("Android WebRTC device streams", () => {
     vi.unstubAllGlobals();
   });
 
-  function setup() {
+  function setup(initialGatheringState = "complete") {
     vi.useFakeTimers();
+    let gatheringStarted!: () => void;
+    const gathering = new Promise<void>((resolve) => {
+      gatheringStarted = resolve;
+    });
     const sockets: Socket[] = [];
     class Socket {
       static OPEN = 1;
@@ -601,7 +605,7 @@ describe("Android WebRTC device streams", () => {
     }
     const peers: Peer[] = [];
     class Peer {
-      iceGatheringState = "complete";
+      iceGatheringState = initialGatheringState;
       connectionState = "connected";
       localDescription = { type: "offer", sdp: "offer-sdp" };
       ontrack: ((event: { streams: unknown[]; track: unknown }) => void) | null = null;
@@ -611,7 +615,9 @@ describe("Android WebRTC device streams", () => {
       setLocalDescription = vi.fn(async () => {});
       setRemoteDescription = vi.fn(async () => {});
       addTransceiver = vi.fn(() => ({ setCodecPreferences: vi.fn() }));
-      addEventListener = vi.fn();
+      addEventListener = vi.fn((name: string) => {
+        if (name === "icegatheringstatechange") gatheringStarted();
+      });
       removeEventListener = vi.fn();
       constructor() {
         peers.push(this);
@@ -651,7 +657,7 @@ describe("Android WebRTC device streams", () => {
       { present },
       events,
     );
-    return { client, events, fetch, peers, videos, sockets, present };
+    return { client, events, fetch, peers, videos, sockets, present, gathering };
   }
 
   it("streams over WebRTC when serve-emu advertises it, with input that reconnects on its own", async () => {
@@ -685,5 +691,49 @@ describe("Android WebRTC device streams", () => {
     expect(peers[0]?.close).not.toHaveBeenCalled();
     expect(events.onStatus).not.toHaveBeenCalled();
     client.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels an unanswered WebRTC offer when its view stops", async () => {
+    const { client, fetch, peers } = setup();
+    let started!: () => void;
+    const offerStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let rejectOffer!: (error: Error) => void;
+    let offerCancelled = false;
+    fetch.mockImplementation((url, init) => {
+      if (!url.includes("/webrtc/offer")) {
+        return Promise.resolve(Response.json({ stream: { transport: "webrtc" } }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        rejectOffer = reject;
+        init?.signal?.addEventListener("abort", () => {
+          offerCancelled = true;
+          reject(new DOMException("Offer cancelled", "AbortError"));
+        });
+        started();
+      });
+    });
+    try {
+      client.start();
+      await offerStarted;
+      client.stop();
+      expect(offerCancelled).toBe(true);
+      expect(peers[0]?.close).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      client.stop();
+      rejectOffer(new DOMException("Test cleanup", "AbortError"));
+    }
+  });
+
+  it("clears pending ICE gathering when its view stops", async () => {
+    const { client, gathering, peers } = setup("gathering");
+    client.start();
+    await gathering;
+    client.stop();
+    expect(peers[0]?.close).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
