@@ -55,12 +55,14 @@ function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   if (output.length === 0) return output;
 
   const trimUnbalanced = (open: string, close: string) => {
-    while (output.endsWith(close)) {
-      const opens = output.split(open).length - 1;
-      const closes = output.split(close).length - 1;
-      if (opens >= closes) return;
-      output = output.slice(0, -1);
+    if (!output.endsWith(close)) return;
+    let excess = output.split(close).length - output.split(open).length;
+    let end = output.length;
+    while (excess > 0 && output[end - 1] === close) {
+      end -= 1;
+      excess -= 1;
     }
+    output = output.slice(0, end);
   };
 
   trimUnbalanced("(", ")");

@@ -1,5 +1,5 @@
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   collectWrappedTerminalLinkLine,
@@ -117,6 +117,16 @@ describe("extractTerminalLinks", () => {
         end: 44,
       },
     ]);
+    const url = "https://example.com/docs";
+    let rescans = 0;
+    {
+      using split = vi.spyOn(String.prototype, "split");
+      expect(extractTerminalLinks(url + ")".repeat(128))).toEqual([
+        { kind: "url", text: url, start: 0, end: url.length },
+      ]);
+      rescans = split.mock.calls.length;
+    }
+    expect(rescans).toBeLessThanOrEqual(12);
   });
 
   it.each([
