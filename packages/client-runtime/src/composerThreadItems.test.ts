@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  composerThreadSearchEnvironments,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
   type ComposerThreadCandidate,
@@ -56,6 +57,10 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
 
 it("also offers threads on linked machines, naming the machine, but no other machine's", () => {
   const vps = EnvironmentId.make("env-vps");
+  expect(composerThreadSearchEnvironments(environmentId, new Map([[vps, "Hetzner VPS"]]))).toEqual([
+    environmentId,
+    vps,
+  ]);
   const items = matchComposerThreadItems({
     shells: [
       shell("here", "Deploy script"),
@@ -76,6 +81,19 @@ it("also offers threads on linked machines, naming the machine, but no other mac
       description: "Thread on Hetzner VPS",
     },
   ]);
+  expect(
+    matchComposerThreadItems({
+      shells: [
+        shell("same-id", "Deploy script"),
+        shell("same-id", "Deploy script", { environmentId: vps }),
+      ],
+      environmentId,
+      linkedEnvironments: new Map([[vps, "Hetzner VPS"]]),
+      excludeThreadId: ThreadId.make("same-id"),
+      query: "deploy",
+      now: Date.parse("2026-10-23T00:00:00.000Z"),
+    }).map((item) => item.thread),
+  ).toEqual([{ environmentId: vps, threadId: "same-id" }]);
 });
 
 describe("matchComposerEnvironmentItems", () => {

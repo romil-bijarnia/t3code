@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   type ComposerEnvironmentCandidate,
+  composerThreadSearchEnvironments,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -347,7 +348,9 @@ export function useComposerCommandMenu({
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId] : [],
+    trigger?.kind === "path" && environmentId
+      ? composerThreadSearchEnvironments(environmentId, linkedEnvironments)
+      : [],
     trigger?.kind === "path" ? trigger.query : "",
     { titlesOnly: true },
   );

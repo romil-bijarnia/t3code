@@ -23,6 +23,13 @@ export interface ComposerThreadItem {
   readonly description: string;
 }
 
+export function composerThreadSearchEnvironments(
+  environmentId: EnvironmentId,
+  linkedEnvironments: ReadonlyMap<EnvironmentId, string>,
+): ReadonlyArray<EnvironmentId> {
+  return [...new Set([environmentId, ...linkedEnvironments.keys()])];
+}
+
 /**
  * Threads to reference from the composer, matched and ranked like the command
  * palette, without subagent or side chat threads. The agent reads threads on its own server
@@ -41,11 +48,13 @@ export function matchComposerThreadItems(input: {
 }): ComposerThreadItem[] {
   const query = foldSearchQuery(input.query);
   if (query.length === 0) return [];
+  const environmentIds = new Set(
+    composerThreadSearchEnvironments(input.environmentId, input.linkedEnvironments),
+  );
   const candidates = input.shells.filter(
     (shell) =>
-      (shell.environmentId === input.environmentId ||
-        input.linkedEnvironments.has(shell.environmentId)) &&
-      shell.id !== input.excludeThreadId &&
+      environmentIds.has(shell.environmentId) &&
+      (shell.environmentId !== input.environmentId || shell.id !== input.excludeThreadId) &&
       shell.archivedAt === null &&
       isListedThreadLineage(shell.lineage),
   );
