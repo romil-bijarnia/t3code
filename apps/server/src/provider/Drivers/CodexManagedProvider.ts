@@ -1,8 +1,12 @@
+import * as Redacted from "effect/Redacted";
+import { makeCodexLiveVoice } from "../CodexLiveVoice.ts";
 import {
   ProviderDriverKind,
   ProviderSetupError,
   TextGenerationError,
+  LiveVoiceError,
   type CodexSettings,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -31,6 +35,49 @@ import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+
+type ManagedCodexRuntime = Effect.Success<ReturnType<typeof makeCodexManagedRuntime>>;
+
+export const makeManagedCodexLiveVoice = Effect.fn("makeManagedCodexLiveVoice")(function* (
+  instanceId: ProviderInstanceId,
+  runtime: {
+    readonly resolve: ManagedCodexRuntime["resolve"];
+    readonly auth: Pick<ManagedCodexRuntime["auth"], "access" | "profileKey"> & {
+      readonly controller: Pick<ManagedCodexRuntime["auth"]["controller"], "withAccess">;
+    };
+  },
+) {
+  const voice = yield* makeCodexLiveVoice(
+    runtime.resolve.pipe(
+      Effect.flatMap((effective) =>
+        Effect.gen(function* () {
+          const credentials = yield* runtime.auth.access;
+          if ((yield* runtime.auth.profileKey(credentials)) !== effective.revision)
+            return yield* new ProviderSetupError({
+              instanceId,
+              operation: "voice",
+              detail: "The ChatGPT connection changed while starting voice. Retry.",
+            });
+          return {
+            ...effective,
+            subscriptionToken: Redacted.make(credentials.accessToken),
+          };
+        }),
+      ),
+    ),
+  );
+  const protectVoice = <A, R>(task: Effect.Effect<A, LiveVoiceError, R>) =>
+    runtime.auth.controller.withAccess!(task).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "LiveVoiceError" ? cause : new LiveVoiceError({ reason: "authentication" }),
+      ),
+    );
+  return {
+    options: protectVoice(voice.options).pipe(Effect.scoped),
+    // The admitted child scope owns the socket until this call closes or credentials change.
+    open: (input) => protectVoice(voice.open(input)),
+  } satisfies NonNullable<ProviderInstance["liveVoice"]>;
+});
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -275,6 +322,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
           }),
       ),
     );
+  const liveVoice = yield* makeManagedCodexLiveVoice(instanceId, runtime);
   const textGeneration: ProviderInstance["textGeneration"] = {
     generateCommitMessage: (value) =>
       protect("generateCommitMessage", nativeGeneration.generateCommitMessage(value)),
@@ -302,6 +350,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     snapshot,
     orchestrationAdapter,
     textGeneration,
+    liveVoice,
     auth: runtime.auth.controller,
     snapshotForCwd: (cwd: string) =>
       enabled
