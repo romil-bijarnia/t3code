@@ -138,6 +138,46 @@ it.effect("a cancelled startup cannot release a newer session's reservation", ()
       const third = yield* service.start(input("third"), owner).pipe(Effect.flip);
       assert.equal(third.reason, "busy");
       yield* service.stop("second", owner);
+      yield* service.start({ ...input("first"), threadId: ThreadId.make("retry-thread") }, owner);
+      assert.equal(yield* Queue.take(test.opened), "first");
+      yield* service.stop("first", owner);
+    }).pipe(Effect.provide(test.layer));
+  }),
+);
+
+it.effect("reserves a session id across threads while its initial validation is pending", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture();
+    const loading = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let first = true;
+    yield* Ref.set(test.selected, {
+      ...test.instance,
+      snapshot: {
+        ...test.instance.snapshot,
+        getSnapshot: Effect.suspend(() => {
+          if (!first) return test.instance.snapshot.getSnapshot;
+          first = false;
+          return Deferred.succeed(loading, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(test.instance.snapshot.getSnapshot),
+          );
+        }),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* LiveVoice.LiveVoice;
+      const starting = yield* service.start(input("shared"), owner).pipe(Effect.forkChild);
+      yield* Deferred.await(loading);
+      const duplicate = yield* service
+        .start({ ...input("shared"), threadId: ThreadId.make("another-thread") }, owner)
+        .pipe(Effect.flip);
+      assert.equal(duplicate.reason, "busy");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(starting);
+      assert.equal(yield* Queue.take(test.opened), "shared");
+      yield* service.stop("shared", owner);
+      assert.equal(yield* Queue.take(test.closed), "shared");
     }).pipe(Effect.provide(test.layer));
   }),
 );

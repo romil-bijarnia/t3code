@@ -67,6 +67,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const serviceScope = yield* Scope.Scope;
   const entries = new Map<string, Entry>();
+  const starting = new Set<string>();
   const byThread = new Map<ThreadId, string>();
   const unavailable = () => new LiveVoiceError({ reason: "unavailable" });
   const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -255,10 +256,17 @@ const make = Effect.gen(function* () {
       return yield* (yield* load(threadId)).voice.options;
     }),
     start: Effect.fn("LiveVoice.start")(function* (input, owner) {
-      if (entries.has(input.sessionId) || byThread.has(input.threadId))
-        return yield* new LiveVoiceError({ reason: "busy" });
-      byThread.set(input.threadId, input.sessionId);
       const scope = yield* Scope.make();
+      if (
+        entries.has(input.sessionId) ||
+        starting.has(input.sessionId) ||
+        byThread.has(input.threadId)
+      ) {
+        yield* Scope.close(scope, Exit.void);
+        return yield* new LiveVoiceError({ reason: "busy" });
+      }
+      starting.add(input.sessionId);
+      byThread.set(input.threadId, input.sessionId);
       let entry: Entry | undefined;
       return yield* Effect.gen(function* () {
         const selected = yield* load(input.threadId);
@@ -306,6 +314,7 @@ const make = Effect.gen(function* () {
           entries.delete(input.sessionId);
           return Scope.close(scope, Exit.void);
         }),
+        Effect.ensuring(Effect.sync(() => starting.delete(input.sessionId))),
       );
     }),
     poll: Effect.fn("LiveVoice.poll")(function* (id, owner, revision) {

@@ -23,11 +23,13 @@ export class BrowserLiveVoice {
   private audio: HTMLAudioElement | null = null;
   private sessionId: string | null = null;
   private generation = 0;
+  private muted = false;
 
   constructor(private readonly dependencies: LiveVoiceBrowserDependencies) {}
 
   stop(notify = true) {
     this.generation++;
+    this.muted = false;
     this.abort?.abort();
     this.abort = null;
     this.stream?.getTracks().forEach((track) => track.stop());
@@ -50,6 +52,7 @@ export class BrowserLiveVoice {
   }
 
   mute(muted: boolean) {
+    this.muted = muted;
     this.stream?.getAudioTracks().forEach((track) => {
       track.enabled = !muted;
     });
@@ -91,6 +94,7 @@ export class BrowserLiveVoice {
         return;
       }
       this.stream = stream;
+      this.mute(this.muted);
       const peer = new RTCPeerConnection();
       this.peer = peer;
       const audio = new Audio();
