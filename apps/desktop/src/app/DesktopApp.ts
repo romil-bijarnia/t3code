@@ -37,6 +37,7 @@ import * as DesktopStartupRecovery from "./DesktopStartupRecovery.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import * as DesktopLiveClientUpdates from "../updates/DesktopLiveClientUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
@@ -179,11 +180,18 @@ const startLocalBackend = Effect.gen(function* () {
 
   const settings = yield* desktopSettings.get;
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const liveClient = yield* Effect.serviceOption(DesktopLiveClientUpdates.DesktopLiveClientUpdates);
+  const liveClientEnabled = Option.isSome(liveClient) && (yield* liveClient.value.configure);
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
     ...(environment.isDevelopment
       ? { targetOrigin: Option.getOrThrow(environment.devServerUrl) }
-      : { assetDirectory: environment.clientAssetsDir }),
+      : {
+          assetDirectory: environment.clientAssetsDir,
+          ...(liveClientEnabled && Option.isSome(liveClient)
+            ? { assetResolver: liveClient.value.resolveAsset }
+            : {}),
+        }),
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   yield* installDesktopIpcHandlers();

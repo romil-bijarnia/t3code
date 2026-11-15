@@ -29,7 +29,15 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { runStream, subscribe, subscribeDynamicWithSession, refreshVcsBranch } from "./client.ts";
+import {
+  runStream,
+  subscribe,
+  subscribeDynamicWithSession,
+  refreshVcsBranch,
+  requestInSession,
+  RpcPermissionGuard,
+} from "./client.ts";
+import { getLiveClientWorkCount } from "../state/live-client-work.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -85,8 +93,67 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect.each(["success", "failure", "defect", "interruption"] as const)(
+    "retains live-update work through direct unary request %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const initialWork = getLiveClientWorkCount();
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const client = {
+          [WS_METHODS.vcsRefreshBranch]: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(finish);
+              if (outcome === "failure") return yield* Effect.fail("request failed");
+              if (outcome === "defect") return yield* Effect.die("request defect");
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const { supervisor } = yield* makeHarness();
+        const request = yield* requestInSession(session(client), WS_METHODS.vcsRefreshBranch, {
+          cwd: "/repo",
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+          Effect.exit,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+        if (outcome === "interruption") yield* Fiber.interrupt(request);
+        else {
+          yield* Deferred.succeed(finish, undefined);
+          const result = yield* Fiber.join(request);
+          expect(result._tag).toBe(outcome === "success" ? "Success" : "Failure");
+        }
+        expect(getLiveClientWorkCount()).toBe(initialWork);
+      }),
+  );
+
+  it.effect("releases direct unary work when request construction throws", () =>
+    Effect.gen(function* () {
+      const initialWork = getLiveClientWorkCount();
+      const client = {
+        [WS_METHODS.vcsRefreshBranch]: () => {
+          throw new Error("request construction failed");
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { supervisor } = yield* makeHarness();
+      const result = yield* requestInSession(session(client), WS_METHODS.vcsRefreshBranch, {
+        cwd: "/repo",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        Effect.exit,
+      );
+      expect(result._tag).toBe("Failure");
+      expect(getLiveClientWorkCount()).toBe(initialWork);
+    }),
+  );
+
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
+      const initialWork = getLiveClientWorkCount();
       const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
       const secondEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
       const firstClient = {
@@ -106,6 +173,8 @@ describe("environment RPC", () => {
       );
       yield* Effect.yieldNow;
 
+      expect(getLiveClientWorkCount()).toBe(initialWork);
+
       yield* Queue.offer(firstEvents, INSTALL_CHECKING);
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
       yield* Queue.offer(secondEvents, INSTALL_DOWNLOADING);
@@ -117,6 +186,7 @@ describe("environment RPC", () => {
 
   it.effect("switches durable subscriptions when the supervisor replaces the session", () =>
     Effect.gen(function* () {
+      const initialWork = getLiveClientWorkCount();
       const subscriptions: string[] = [];
       const subscriptionChanges = yield* Queue.make<void>();
       const firstClient = {
@@ -152,8 +222,10 @@ describe("environment RPC", () => {
       );
       yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
       yield* awaitSubscriptions(1);
+      expect(getLiveClientWorkCount()).toBe(initialWork);
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
       yield* awaitSubscriptions(2);
+      expect(getLiveClientWorkCount()).toBe(initialWork);
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(subscriptions).toEqual(["first", "second"]);

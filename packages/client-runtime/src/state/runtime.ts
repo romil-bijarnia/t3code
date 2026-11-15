@@ -2,6 +2,7 @@ import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 import { reuseUnchanged } from "./serverConfigProjection.ts";
+import { retainLiveClientWork } from "./live-client-work.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
@@ -438,15 +439,26 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: (registry, input) =>
-      settleAtomCommandResult(() =>
-        scheduler.schedule(registry, concurrency, input, () => {
-          const atom = runtime
-            .atom(options.execute(input, registry))
-            .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
-        }),
-      ),
+    run: async (registry, input) => {
+      // Retain queued calls too: a renderer reload would discard their scheduler lane.
+      const release = retainLiveClientWork();
+      try {
+        return await settleAtomCommandResult(() =>
+          scheduler.schedule(registry, concurrency, input, () => {
+            const atom = runtime
+              .atom(
+                options
+                  .execute(input, registry)
+                  .pipe(Effect.onInterrupt(() => Effect.sync(release))),
+              )
+              .pipe(Atom.withLabel(options.label));
+            return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          }),
+        );
+      } finally {
+        release();
+      }
+    },
   };
 }
 

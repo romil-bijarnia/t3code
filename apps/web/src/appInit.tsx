@@ -302,6 +302,17 @@ export function startAppServices(): AppRouter {
   startThreadNotifications(appAtomRegistry, router);
   startGuideRunNotifications(appAtomRegistry, router);
   if (isElectron) startDesktopUpdateLaunchNotice();
+  if (isElectron) {
+    const liveClient = window.desktopBridge?.liveClientUpdates;
+    void liveClient
+      ?.getState()
+      .then(async (state) => {
+        if (state.phase === "disabled") return;
+        const { startLiveClientUpdates } = await import("./lib/liveClientUpdates");
+        startLiveClientUpdates(router, state);
+      })
+      .catch(() => {});
+  }
 
   return router;
 }

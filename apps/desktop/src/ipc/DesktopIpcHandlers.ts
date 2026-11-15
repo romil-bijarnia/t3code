@@ -32,6 +32,11 @@ import {
   getUpdateState,
   installUpdate,
   setUpdateChannel,
+  getLiveClientState,
+  getLiveClientTrial,
+  activateLiveClient,
+  acknowledgeLiveClient,
+  failLiveClient,
 } from "./methods/updates.ts";
 import {
   getAppBranding,
@@ -88,6 +93,11 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* ipc.handle(getLiveClientState);
+  yield* ipc.handleSync(getLiveClientTrial);
+  yield* ipc.handle(activateLiveClient);
+  yield* ipc.handle(acknowledgeLiveClient);
+  yield* ipc.handle(failLiveClient);
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 

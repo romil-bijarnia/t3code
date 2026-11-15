@@ -1,3 +1,4 @@
+import { retainLiveClientWork } from "@t3tools/client-runtime/state/live-client-work";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -42,6 +43,15 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
+
+async function withLiveClientWork(run: () => Promise<void>): Promise<void> {
+  const release = retainLiveClientWork();
+  try {
+    await run();
+  } finally {
+    release();
+  }
+}
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -310,6 +320,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         options,
       ).then((result) => result.text);
     };
+    let releaseLiveWork: (() => void) | null = null;
     controller = new VoiceInputController({
       retryFailedRecording: true,
       recorder: platform.recorder,
@@ -333,6 +344,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       },
       onStateChange: (value) => {
         if (disposed) return;
+        if (value.phase === "idle") {
+          releaseLiveWork?.();
+          releaseLiveWork = null;
+        } else if (releaseLiveWork === null) {
+          releaseLiveWork = retainLiveClientWork();
+        }
         if (value.phase === "error") pendingSubmissionRef.current = null;
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
@@ -345,6 +362,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       startRequestRef.current += 1;
       setQueuedStart(null);
       controller.dispose();
+      releaseLiveWork?.();
+      releaseLiveWork = null;
       if (controllerRef.current === controller) controllerRef.current = null;
     };
   }, [prepared, grantId, cloudProvider, cloudModel]);
@@ -449,59 +468,61 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     },
   );
 
-  const start = useStableCallback(async () => {
-    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
-    if (!grantId) {
-      if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
-        await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
-      return;
-    }
-    const request = ++startRequestRef.current;
-    const controller = controllerRef.current;
-    const owner = latestRef.current.input.ownerKey;
-    if (!controller || !prepared) return;
-    if (cloudProvider) {
+  const start = useStableCallback(() =>
+    withLiveClientWork(async () => {
+      if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
+      if (!grantId) {
+        if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
+          await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
+        return;
+      }
+      const request = ++startRequestRef.current;
+      const controller = controllerRef.current;
+      const owner = latestRef.current.input.ownerKey;
+      if (!controller || !prepared) return;
+      if (cloudProvider) {
+        setLevel(0);
+        await controller.start();
+        return;
+      }
+      const stillCurrent = () =>
+        request === startRequestRef.current &&
+        controllerRef.current === controller &&
+        latestRef.current.input.ownerKey === owner &&
+        !latestRef.current.input.disabled;
+      setSetup(INITIAL_SETUP);
+      setQueuedStart(prepared);
+      let latestStatus: EnvironmentSpeechStatus;
+      try {
+        latestStatus = await probeSpeechStatus(prepared, true);
+      } catch (error) {
+        if (!stillCurrent()) return;
+        setQueuedStart(null);
+        toastManager.add({
+          type: "error",
+          title: "Could not start voice input",
+          description: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      if (!stillCurrent()) return;
+      setStatus({ prepared, value: latestStatus });
+      setQueuedStart(null);
+      if (latestStatus.supported && latestStatus.state === "missing-model") {
+        return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      }
+      if (!latestStatus.supported) {
+        toastManager.add({
+          type: "error",
+          title: "Voice input is not available",
+          description: latestStatus.reason,
+        });
+        return;
+      }
       setLevel(0);
       await controller.start();
-      return;
-    }
-    const stillCurrent = () =>
-      request === startRequestRef.current &&
-      controllerRef.current === controller &&
-      latestRef.current.input.ownerKey === owner &&
-      !latestRef.current.input.disabled;
-    setSetup(INITIAL_SETUP);
-    setQueuedStart(prepared);
-    let latestStatus: EnvironmentSpeechStatus;
-    try {
-      latestStatus = await probeSpeechStatus(prepared, true);
-    } catch (error) {
-      if (!stillCurrent()) return;
-      setQueuedStart(null);
-      toastManager.add({
-        type: "error",
-        title: "Could not start voice input",
-        description: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-    if (!stillCurrent()) return;
-    setStatus({ prepared, value: latestStatus });
-    setQueuedStart(null);
-    if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, request);
-    }
-    if (!latestStatus.supported) {
-      toastManager.add({
-        type: "error",
-        title: "Voice input is not available",
-        description: latestStatus.reason,
-      });
-      return;
-    }
-    setLevel(0);
-    await controller.start();
-  });
+    }),
+  );
 
   const downloadSetupModel = useStableCallback(async () => {
     if (!prepared || !currentStatus?.supported || !setupModelId || setup.downloading) return;

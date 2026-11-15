@@ -42,6 +42,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { hasLiveClientTrial } from "../updates/liveClientTrial.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -910,6 +911,7 @@ export const make = Effect.gen(function* () {
           return;
         }
         const retryInMs =
+          !hasLiveClientTrial(window.webContents.id) &&
           environment.isDevelopment &&
           isRetryableDevelopmentRendererLoadFailure({
             applicationUrl,
@@ -930,6 +932,8 @@ export const make = Effect.gen(function* () {
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
+      // The trial owner restores the original route; normal recovery loads the application root.
+      const liveClientOwnsRecovery = hasLiveClientTrial(window.webContents.id);
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
@@ -943,6 +947,7 @@ export const make = Effect.gen(function* () {
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
           );
           const shouldRecover =
+            !liveClientOwnsRecovery &&
             recoverable &&
             !window.isDestroyed() &&
             rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
@@ -950,6 +955,7 @@ export const make = Effect.gen(function* () {
             reason: details.reason,
             exitCode: details.exitCode,
             recovering: shouldRecover,
+            ...(liveClientOwnsRecovery ? { recoveryOwner: "live-client-update" } : {}),
           });
           if (!shouldRecover) {
             return;

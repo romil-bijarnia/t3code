@@ -55,7 +55,13 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
-} & ({ readonly targetOrigin: URL } | { readonly assetDirectory: string });
+} & (
+  | { readonly targetOrigin: URL }
+  | {
+      readonly assetDirectory: string;
+      readonly assetResolver?: (relativePath: string) => string | undefined;
+    }
+);
 
 export class ElectronProtocol extends Context.Service<
   ElectronProtocol,
@@ -208,6 +214,7 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
 const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   request: Request,
   assetDirectory: string,
+  assetResolver?: (relativePath: string) => string | undefined,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -223,20 +230,25 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   if (assetPath !== root && !assetPath.startsWith(root + path.sep)) {
     return new Response(null, { status: 404 });
   }
-  const stat = yield* fileSystem.stat(assetPath).pipe(Effect.orElseSucceed(() => null));
-  let filePath = assetPath;
+  const relativePath = path.relative(root, assetPath).split(path.sep).join("/");
+  const resolvedAssetPath = assetResolver?.(relativePath || "index.html") ?? assetPath;
+  const stat = yield* fileSystem.stat(resolvedAssetPath).pipe(Effect.orElseSucceed(() => null));
+  let filePath = resolvedAssetPath;
+  let servesIndex = relativePath === "" || relativePath === "index.html";
   if (stat?.type !== "File") {
     const wantsHtml = request.headers.get("accept")?.includes("text/html") ?? false;
     if (path.extname(assetPath) !== "" && !wantsHtml) {
       return new Response(null, { status: 404 });
     }
-    filePath = path.join(root, "index.html");
+    filePath = assetResolver?.("index.html") ?? path.join(root, "index.html");
+    servesIndex = true;
   }
   const contents = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
   if (contents === null) return new Response(null, { status: 404 });
   return new Response(request.method === "HEAD" ? null : new Uint8Array(contents), {
     headers: {
       "content-type": Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream"),
+      ...(assetResolver && servesIndex ? { "cache-control": "no-store" } : {}),
     },
   });
 });
@@ -259,7 +271,9 @@ export const make = Effect.gen(function* () {
             Electron.protocol.handle(input.scheme, async (request) => {
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(
-                  await runPromise(serveDesktopAsset(request, input.assetDirectory)),
+                  await runPromise(
+                    serveDesktopAsset(request, input.assetDirectory, input.assetResolver),
+                  ),
                   contentSecurityPolicy,
                 );
               }

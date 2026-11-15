@@ -48,6 +48,7 @@ describe("ElectronProtocol", () => {
 
       const page = yield* request("/settings/connections");
       assert.equal(yield* Effect.promise(() => page.text()), "<html>app</html>");
+      assert.isNull(page.headers.get("cache-control"));
       assert.include(page.headers.get("content-security-policy") ?? "", "default-src 'self'");
       const dottedRoute = yield* request("/environment/thread.with.dots", {
         headers: { accept: "text/html" },
@@ -62,6 +63,61 @@ describe("ElectronProtocol", () => {
       assert.equal((yield* request("/%2e%2e%2fsecret.txt")).status, 404);
       assert.equal((yield* request("/%invalid")).status, 400);
       assert.equal((yield* request("/", { method: "POST" })).status, 405);
+      assert.equal(netFetchMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(Layer.merge(layerProtocol, NodeServices.layer))),
+  );
+
+  it.effect("resolves verified live assets while retaining protocol boundaries", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bundled = yield* fileSystem.makeTempDirectoryScoped();
+      const candidate = yield* fileSystem.makeTempDirectoryScoped();
+      yield* fileSystem.writeFileString(`${bundled}/index.html`, "old page");
+      yield* fileSystem.writeFileString(`${bundled}/fallback.js`, "bundled fallback");
+      yield* fileSystem.writeFileString(`${candidate}/index.html`, "new page");
+      yield* fileSystem.writeFileString(`${candidate}/new.js`, "new code");
+      const resolved: string[] = [];
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* protocol.registerDesktopProtocol({
+        scheme: "t3code",
+        assetDirectory: bundled,
+        clerkFrontendApiHostname: undefined,
+        assetResolver: (relativePath) => {
+          resolved.push(relativePath);
+          return relativePath === "index.html" || relativePath === "new.js"
+            ? `${candidate}/${relativePath}`
+            : undefined;
+        },
+      });
+      const request = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler!(new Request(`t3code://app${pathname}`, init)));
+      const index = yield* request("/");
+      assert.equal(yield* Effect.promise(() => index.text()), "new page");
+      assert.equal(index.headers.get("cache-control"), "no-store");
+      const explicitIndex = yield* request("/index.html", { method: "HEAD" });
+      assert.equal(explicitIndex.headers.get("cache-control"), "no-store");
+      assert.include(index.headers.get("content-security-policy") ?? "", "default-src 'self'");
+      const route = yield* request("/settings");
+      assert.equal(yield* Effect.promise(() => route.text()), "new page");
+      assert.equal(route.headers.get("cache-control"), "no-store");
+      const script = yield* request("/new.js?v=2");
+      assert.equal(yield* Effect.promise(() => script.text()), "new code");
+      assert.isNull(script.headers.get("cache-control"));
+      const fallback = yield* request("/fallback.js");
+      assert.equal(yield* Effect.promise(() => fallback.text()), "bundled fallback");
+      const head = yield* request("/new.js", { method: "HEAD" });
+      assert.equal(yield* Effect.promise(() => head.text()), "");
+      assert.include(head.headers.get("content-type") ?? "", "javascript");
+      assert.equal((yield* request("/missing.js")).status, 404);
+      const before = resolved.length;
+      assert.equal((yield* request("/%2e%2e%2fsecret.txt")).status, 404);
+      assert.equal((yield* request("/%invalid")).status, 400);
+      assert.equal((yield* request("/", { method: "POST" })).status, 405);
+      assert.equal(resolved.length, before);
       assert.equal(netFetchMock.mock.calls.length, 0);
     }).pipe(Effect.provide(Layer.merge(layerProtocol, NodeServices.layer))),
   );

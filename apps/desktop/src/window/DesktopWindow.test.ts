@@ -49,6 +49,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+import { hasLiveClientTrial, retainLiveClientTrial } from "../updates/liveClientTrial.ts";
 import {
   PASSKEY_BRIDGE_ARGUMENT,
   PRIMARY_PASTE_DISABLED_ARGUMENT,
@@ -73,6 +74,7 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    id: 1,
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -493,6 +495,32 @@ const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111"
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
 
 describe("DesktopWindow", () => {
+  it.effect.each([false, true])("coordinates crash recovery ownership for live trial=%s", (trial) =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const crash = fakeWindow.webContentsListeners.get("render-process-gone");
+        assert.isDefined(crash);
+        const release = trial ? retainLiveClientTrial(fakeWindow.window.webContents.id) : () => {};
+        try {
+          crash({}, { reason: "crashed", exitCode: 1 });
+          // Recovery ownership must be captured before the live host clears its trial marker.
+          release();
+          release();
+          assert.isFalse(hasLiveClientTrial(fakeWindow.window.webContents.id));
+          yield* TestClock.adjust(500);
+          yield* Effect.promise(() => Promise.resolve());
+          assert.equal(fakeWindow.loadURL.mock.calls.length, trial ? 1 : 2);
+        } finally {
+          release();
+        }
+      }).pipe(Effect.provide(layerTest({ window: fakeWindow.window, createCount, mainWindow })));
+    }),
+  );
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

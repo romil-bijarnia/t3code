@@ -4607,6 +4607,21 @@ export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): vo
   composerDebouncedStorage.flush();
 }
 
+export function flushComposerDraftStorage(): void {
+  if (!useComposerDraftStore.persist.hasHydrated())
+    throw new Error("Composer drafts are not hydrated.");
+  composerDebouncedStorage.flush();
+  const text = serializeComposerDraftState({
+    state: { capturedState: useComposerDraftStore.getState() },
+    version: COMPOSER_DRAFT_STORAGE_VERSION,
+  });
+  composerDraftBaseStorage.setItem(COMPOSER_DRAFT_STORAGE_KEY, text);
+  if (composerDraftBaseStorage.getItem(COMPOSER_DRAFT_STORAGE_KEY) !== text) {
+    throw new Error("Composer draft checkpoint was not saved.");
+  }
+  composerDraftLastWrite = composerDraftPendingWrite;
+}
+
 export function useComposerThreadDraft(threadRef: ComposerThreadTarget): ComposerThreadDraftState {
   return useComposerDraftStore((state) => {
     return getComposerDraftState(state, threadRef) ?? EMPTY_THREAD_DRAFT;

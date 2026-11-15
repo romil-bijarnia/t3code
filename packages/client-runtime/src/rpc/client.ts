@@ -20,6 +20,7 @@ import { RpcClientError } from "effect/rpc";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { retainLiveClientWork } from "../state/live-client-work.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -204,22 +205,29 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
 export const requestInSession = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(session: RpcSession, tag: TTag, input: EnvironmentRpcInput<TTag>) {
-  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  yield* Effect.annotateCurrentSpan({
-    "environment.id": supervisor.target.environmentId,
-    "rpc.method": tag,
-  });
-  yield* authorizeRequest(tag, input);
-  const observer = yield* EnvironmentRpcRequestObserver;
-  const method = session.client[tag] as (
-    input: EnvironmentRpcInput<TTag>,
-  ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
-  const completeObservation = yield* observer.observe({
-    environmentId: supervisor.target.environmentId,
-    environmentLabel: supervisor.target.label,
-    method: tag,
-  });
-  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+  return yield* Effect.acquireUseRelease(
+    Effect.sync(retainLiveClientWork),
+    () =>
+      Effect.gen(function* () {
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+        yield* Effect.annotateCurrentSpan({
+          "environment.id": supervisor.target.environmentId,
+          "rpc.method": tag,
+        });
+        yield* authorizeRequest(tag, input);
+        const observer = yield* EnvironmentRpcRequestObserver;
+        const method = session.client[tag] as (
+          input: EnvironmentRpcInput<TTag>,
+        ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
+        const completeObservation = yield* observer.observe({
+          environmentId: supervisor.target.environmentId,
+          environmentLabel: supervisor.target.label,
+          method: tag,
+        });
+        return yield* method(input).pipe(Effect.ensuring(completeObservation));
+      }),
+    (release) => Effect.sync(release),
+  );
 });
 
 // The session-bound request owns the existing EnvironmentRpc.request span.

@@ -316,6 +316,16 @@ export default defineConfig(({ command }) => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      {
+        name: "live-client-version",
+        transformIndexHtml: () => [
+          {
+            tag: "meta",
+            attrs: { name: "t3-live-client-version", content: configuredAppVersion },
+            injectTo: "head",
+          },
+        ],
+      },
       bootstrapTitlePlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),

@@ -20,7 +20,15 @@ import {
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { Minimize2Icon } from "lucide-react";
-import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type ToggleEvent,
+} from "react";
+import { registerLiveClientDocumentBlocker } from "../../lib/liveClientUpdateSafety";
 import { flushSync } from "react-dom";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -413,6 +421,12 @@ export function McpAppFrame(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
   }, [toolCall, src, documentGeneration]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opaque app forms cannot be checkpointed; mounting or removing the frame updates the live-reload boundary.
+  useLayoutEffect(() => {
+    if (closed || navigatedAway || src === null) return;
+    return registerLiveClientDocumentBlocker(() => true);
+  }, [closed, navigatedAway, src]);
+
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
@@ -473,6 +487,7 @@ export function McpAppFrame(props: {
           </p>
         ) : src !== null ? (
           <iframe
+            data-live-client-blocker="embedded-app"
             ref={attachFrame}
             src={src}
             title={`${app.server} app`}
