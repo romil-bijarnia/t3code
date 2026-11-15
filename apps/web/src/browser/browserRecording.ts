@@ -1,3 +1,4 @@
+import { retainLiveClientWork } from "@t3tools/client-runtime/state/live-client-work";
 import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   PreviewCaptureFailure,
@@ -142,6 +143,7 @@ interface ActiveRecording {
   readonly startedAt: string;
   readonly startupSettled: Promise<void>;
   releaseSurfaceActivity: (() => void) | null;
+  releaseLiveWork: () => void;
   stream: MediaStream | null;
   recorder: MediaRecorder | null;
   compositor: Awaited<ReturnType<typeof createRecordingCompositor>> | null;
@@ -401,6 +403,7 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
   recording.releaseSurfaceActivity = null;
   if (activeRecordings.get(recording.tabId) !== recording) return;
   activeRecordings.delete(recording.tabId);
+  recording.releaseLiveWork();
   publishActiveRecordingTabIds();
 };
 
@@ -539,6 +542,7 @@ export async function startBrowserRecording(
     startedAt,
     startupSettled,
     releaseSurfaceActivity,
+    releaseLiveWork: retainLiveClientWork(),
     stream: null,
     recorder: null,
     compositor: null,

@@ -57,6 +57,11 @@ import type { EnvironmentShellState } from "./shell.ts";
 import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
+  getLiveClientWorkCount,
+  retainLiveClientWork,
+  subscribeLiveClientWork,
+} from "./live-client-work.ts";
+import {
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -1501,6 +1506,7 @@ describe("executeAtomQuery", () => {
 
 describe("runtime command runner", () => {
   it("settles generated command scheduler defects from direct callers", async () => {
+    const initialWork = getLiveClientWorkCount();
     const defect = new Error("invalid command key");
     const runtime = Atom.runtime(Layer.empty);
     const command = createRuntimeCommand(runtime, {
@@ -1516,6 +1522,7 @@ describe("runtime command runner", () => {
     const registry = AtomRegistry.make();
 
     const result = await command.run(registry, undefined);
+    expect(getLiveClientWorkCount()).toBe(initialWork);
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(Cause.hasDies(result.cause)).toBe(true);
@@ -1525,6 +1532,9 @@ describe("runtime command runner", () => {
   });
 
   it("serializes commands that share a scheduler and lane", async () => {
+    const initialWork = getLiveClientWorkCount();
+    const workCounts: number[] = [];
+    const unsubscribe = subscribeLiveClientWork(() => workCounts.push(getLiveClientWorkCount()));
     const firstLatch = Latch.makeUnsafe();
     const events: string[] = [];
     const runtime = Atom.runtime(Layer.empty);
@@ -1550,14 +1560,98 @@ describe("runtime command runner", () => {
 
     const first = firstCommand.run(registry, undefined);
     const second = secondCommand.run(registry, undefined);
+    expect(getLiveClientWorkCount()).toBe(initialWork + 2);
     await Promise.resolve();
     expect(events).toEqual(["first:start"]);
 
     firstLatch.openUnsafe();
     await Promise.all([first, second]);
     expect(events).toEqual(["first:start", "first:end", "second:start"]);
+    expect(getLiveClientWorkCount()).toBe(initialWork);
+    expect(workCounts).toEqual([initialWork + 1, initialWork + 2, initialWork + 1, initialWork]);
+    unsubscribe();
     registry.dispose();
   });
+
+  it.each([
+    ["failure", Effect.fail("request failed")],
+    ["interruption", Effect.failCause(Cause.interrupt())],
+    ["defect", Effect.die(new Error("request defect"))],
+  ] as const)("releases live-update work after request %s", async (_label, outcome) => {
+    const initialWork = getLiveClientWorkCount();
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const finish = Latch.makeUnsafe();
+    const runtime = Atom.runtime(Layer.empty);
+    const command = createRuntimeCommand(runtime, {
+      label: "test.live-client-work",
+      execute: () =>
+        Effect.sync(markEntered).pipe(Effect.andThen(finish.await), Effect.andThen(outcome)),
+    });
+    const registry = AtomRegistry.make();
+    try {
+      const result = command.run(registry, undefined);
+      await entered;
+      expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+      finish.openUnsafe();
+      expect((await result)._tag).toBe("Failure");
+      expect(getLiveClientWorkCount()).toBe(initialWork);
+    } finally {
+      finish.openUnsafe();
+      registry.dispose();
+    }
+  });
+
+  it.each(["serial", "singleFlight", "latest", "parallel"] as const)(
+    "releases live-update work when disposal interrupts an executing command with %s callers",
+    async (mode) => {
+      const unrelatedWork = retainLiveClientWork();
+      const initialWork = getLiveClientWorkCount();
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        markEntered = resolve;
+      });
+      let markInterrupted!: () => void;
+      const interrupted = new Promise<void>((resolve) => {
+        markInterrupted = resolve;
+      });
+      let markReleased!: () => void;
+      const released = new Promise<void>((resolve) => {
+        markReleased = resolve;
+      });
+      let disposing = false;
+      const unsubscribe = subscribeLiveClientWork(() => {
+        if (disposing && getLiveClientWorkCount() < initialWork + 2) markReleased();
+      });
+      const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
+        label: "test.live-client-interrupted",
+        concurrency: { mode, key: () => "shared" },
+        execute: () =>
+          Effect.sync(markEntered).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Effect.sync(markInterrupted)),
+          ),
+      });
+      const registry = AtomRegistry.make();
+      try {
+        void command.run(registry, undefined);
+        await entered;
+        expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+        void command.run(registry, undefined);
+        expect(getLiveClientWorkCount()).toBe(initialWork + 2);
+        disposing = true;
+        registry.dispose();
+        await Promise.all([interrupted, released]);
+        expect(getLiveClientWorkCount()).toBe(initialWork);
+      } finally {
+        registry.dispose();
+        unsubscribe();
+        unrelatedWork();
+      }
+    },
+  );
 
   it.effect("releases a shared scheduler lane before the outer command finishes", () =>
     Effect.gen(function* () {

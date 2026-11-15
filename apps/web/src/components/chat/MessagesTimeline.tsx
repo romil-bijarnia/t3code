@@ -1,4 +1,5 @@
 import { threadEnvironment } from "../../state/threads";
+import { registerLiveClientDocumentBlocker } from "../../lib/liveClientUpdateSafety";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
@@ -66,6 +67,7 @@ import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  hasLiveClientTimelineStateRisk,
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
@@ -480,6 +482,33 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The live-update boundary reads disclosure sets directly, including child mutations that do not rerender this timeline.
+  useLayoutEffect(
+    () =>
+      registerLiveClientDocumentBlocker(
+        () =>
+          !liveFollowEnabled ||
+          restoringThreadPosition ||
+          findActive ||
+          paintedExpandedRunIds.size > 0 ||
+          paintedExpandedWorkGroupIds.size > 0 ||
+          paintedExpandedAttemptIds.size > 0 ||
+          workGroupViewState.expandedEntries.size > 0 ||
+          workGroupViewState.scrollPositions.size > 0 ||
+          hasLiveClientTimelineStateRisk(listIdentityKey),
+      ),
+    [
+      liveFollowEnabled,
+      restoringThreadPosition,
+      findActive,
+      paintedExpandedRunIds,
+      paintedExpandedWorkGroupIds,
+      paintedExpandedAttemptIds,
+      workGroupViewState,
+      listIdentityKey,
+    ],
+  );
 
   const disclosureRevealRef = useRef<{
     key: string;
@@ -1473,6 +1502,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
               // Keyboard scrolling only moves the focused element; F6 and clicks land here.
               tabIndex={-1}
               data-workspace-focus-default
+              data-live-client-timeline="true"
+              data-live-client-following-end={
+                liveFollowEnabled && !restoringThreadPosition && !findActive ? "true" : "false"
+              }
               className={cn(
                 "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
                 topFadeEnabled && "topbar-scroll-fade",

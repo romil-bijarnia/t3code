@@ -1,4 +1,5 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
+import { LiveClientBootAcknowledgement } from "./LiveClientBootAcknowledgement";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -4060,6 +4061,22 @@ export default function ChatView(props: ChatViewProps) {
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
+      {embedded || !document.documentElement.dataset.liveClientTrial ? null : (
+        <LiveClientBootAcknowledgement
+          ready={
+            routeKind === "server" &&
+            serverProjection !== null &&
+            threadStatus === "live" &&
+            threadSyncPhase === null &&
+            !serverThreadHistory.loading &&
+            serverThreadHistory.error === null &&
+            activeEnvironment?.connection.phase === "connected" &&
+            activeEnvironment.serverConfig !== null &&
+            activeEnvironmentBootstrapComplete &&
+            clientSettingsHydrated
+          }
+        />
+      )}
     </div>
   );
   return (

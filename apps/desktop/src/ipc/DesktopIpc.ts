@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { retainDesktopClientWork } from "./liveClientWork.ts";
 
 export interface DesktopIpcInvokeEvent {
   readonly sender: { readonly id: number };
@@ -120,7 +121,12 @@ export const make = (
                   if (!(yield* isTrustedSender(event))) {
                     return yield* new DesktopIpcUntrustedSenderError({ channel });
                   }
-                  return yield* handler(raw, event);
+                  if (channel.startsWith("desktop:live-client-")) return yield* handler(raw, event);
+                  return yield* Effect.acquireUseRelease(
+                    Effect.sync(retainDesktopClientWork),
+                    () => handler(raw, event),
+                    (release) => Effect.sync(release),
+                  );
                 }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
               ),
             );

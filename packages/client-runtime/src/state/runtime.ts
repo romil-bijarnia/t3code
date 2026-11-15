@@ -2,6 +2,7 @@ import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
 import { reuseUnchanged } from "./serverConfigProjection.ts";
+import { retainLiveClientWork } from "./live-client-work.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
@@ -425,6 +426,15 @@ export async function executeAtomQuery<A, E>(
   );
 }
 
+const liveClientCommandOwners = Atom.make((get) => {
+  const owners = new Set<() => void>();
+  get.addFinalizer(() => {
+    for (const release of owners) release();
+    owners.clear();
+  });
+  return owners;
+}).pipe(Atom.keepAlive, Atom.withLabel("live-client:command-owners"));
+
 export function createRuntimeCommand<R, ER, W, A, E>(
   runtime: Atom.AtomRuntime<R, ER>,
   options: {
@@ -439,14 +449,30 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   return {
     label: options.label,
     run: (registry, input) =>
-      settleAtomCommandResult(() =>
-        scheduler.schedule(registry, concurrency, input, () => {
-          const atom = runtime
-            .atom(options.execute(input, registry))
-            .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
-        }),
-      ),
+      settleAtomCommandResult(async () => {
+        // Queued and deduplicated callers have no execution scope of their own to release on disposal.
+        const owners = registry.get(liveClientCommandOwners);
+        const retained = retainLiveClientWork();
+        owners.add(retained);
+        const release = () => {
+          owners.delete(retained);
+          retained();
+        };
+        try {
+          return await scheduler.schedule(registry, concurrency, input, () => {
+            const atom = runtime
+              .atom(
+                options
+                  .execute(input, registry)
+                  .pipe(Effect.onInterrupt(() => Effect.sync(release))),
+              )
+              .pipe(Atom.withLabel(options.label));
+            return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          });
+        } finally {
+          release();
+        }
+      }),
   };
 }
 

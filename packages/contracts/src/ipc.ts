@@ -1,6 +1,22 @@
 import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
+export const DesktopLiveClientUpdateStateSchema = Schema.Struct({
+  phase: Schema.Literals([
+    "disabled",
+    "idle",
+    "checking",
+    "ready",
+    "activating",
+    "applied",
+    "deferred",
+  ]),
+  currentVersion: Schema.String,
+  candidateVersion: Schema.NullOr(Schema.String),
+  reason: Schema.NullOr(Schema.String),
+});
+export type DesktopLiveClientUpdateState = typeof DesktopLiveClientUpdateStateSchema.Type;
+
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
@@ -1163,6 +1179,13 @@ export interface DesktopBridge {
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getWindowZoomFactor: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;
+  liveClientUpdates?: {
+    getState: () => Promise<DesktopLiveClientUpdateState>;
+    activate: (version: string) => Promise<boolean>;
+    acknowledge: (version: string) => Promise<boolean>;
+    fail: (version: string, reload?: boolean) => Promise<boolean>;
+    onState: (listener: (state: DesktopLiveClientUpdateState) => void) => () => void;
+  };
   /** `minimumVersion` is a track switch's checked release; nothing older is offered after. */
   setUpdateChannel: (
     channel: DesktopUpdateChannel,

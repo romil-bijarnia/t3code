@@ -130,6 +130,23 @@ export interface RememberedTimelinePosition {
 
 const rememberedTimelinePositions = new Map<string, RememberedTimelinePosition>();
 
+export function hasLiveClientTimelineStateRisk(visibleThreadKey: string): boolean {
+  for (const [threadKey, position] of rememberedTimelinePositions) {
+    if (threadKey === visibleThreadKey) continue;
+    const disclosures = position.disclosures;
+    if (
+      !position.atEnd ||
+      (disclosures?.runs.size ?? 0) > 0 ||
+      (disclosures?.workGroups.size ?? 0) > 0 ||
+      (disclosures?.attempts.size ?? 0) > 0 ||
+      (disclosures?.workGroupState.expandedEntries.size ?? 0) > 0 ||
+      (disclosures?.workGroupState.scrollPositions.size ?? 0) > 0
+    )
+      return true;
+  }
+  return false;
+}
+
 export function readTimelinePosition(threadKey: string) {
   return rememberedTimelinePositions.get(threadKey);
 }

@@ -1,3 +1,4 @@
+import { getLiveClientWorkCount } from "@t3tools/client-runtime/state/live-client-work";
 import { useLayoutEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -317,7 +318,9 @@ it.each([true, false])(
     expect(mocks.voice.transcriptionEnvironmentId).toBe("env-a");
     await act(() => mocks.voice.start());
     expect(mocks.voice.state.phase).toBe("recording");
+    expect(getLiveClientWorkCount()).toBe(1);
     await act(() => mocks.voice.stop());
+    expect(getLiveClientWorkCount()).toBe(0);
     expect(
       new Set([...mocks.platforms, ...mocks.microphoneRequests, ...mocks.transcribeCalls]),
     ).toEqual(new Set(["env-a"]));

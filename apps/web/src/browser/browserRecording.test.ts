@@ -1,3 +1,4 @@
+import { getLiveClientWorkCount } from "@t3tools/client-runtime/state/live-client-work";
 import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   EnvironmentId,
@@ -224,6 +225,7 @@ describe("browser recording", () => {
       startBrowserRecording("recording-tab-2", secondThreadRef),
     ]);
 
+    expect(getLiveClientWorkCount()).toBe(2);
     expect(startScreencast).toHaveBeenCalledTimes(2);
     expect(events).toContain("publish:recording-tab,recording-tab-2");
     expect(readActiveBrowserRecordingTabIds()).toEqual(
@@ -233,8 +235,10 @@ describe("browser recording", () => {
     expect(readActiveBrowserRecordingTabIds(secondThreadRef)).toEqual(new Set(["recording-tab-2"]));
 
     await stopBrowserRecording("recording-tab");
+    expect(getLiveClientWorkCount()).toBe(1);
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set(["recording-tab-2"]));
     await stopBrowserRecording("recording-tab-2");
+    expect(getLiveClientWorkCount()).toBe(0);
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
     expect(save).toHaveBeenCalledTimes(2);
   });

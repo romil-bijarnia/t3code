@@ -13,6 +13,18 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+import { freezeLiveClientTrial } from "./updates/liveClientBootGate.ts";
+
+if (window.location.search.includes("__t3_live_client_trial=")) {
+  const trial: unknown = ipcRenderer.sendSync(IpcChannels.LIVE_CLIENT_TRIAL_CHANNEL);
+  if (
+    typeof trial === "string" &&
+    new URL(window.location.href).searchParams.get("__t3_live_client_trial") === trial
+  ) {
+    const stop = freezeLiveClientTrial(document, trial);
+    window.addEventListener("beforeunload", stop, { once: true });
+  }
+}
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -320,6 +332,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   getUpdateState: () => ipcRenderer.invoke(IpcChannels.UPDATE_GET_STATE_CHANNEL),
+  liveClientUpdates: {
+    getState: () => ipcRenderer.invoke(IpcChannels.LIVE_CLIENT_GET_STATE_CHANNEL),
+    activate: (version) => ipcRenderer.invoke(IpcChannels.LIVE_CLIENT_ACTIVATE_CHANNEL, version),
+    acknowledge: (version) => ipcRenderer.invoke(IpcChannels.LIVE_CLIENT_READY_CHANNEL, version),
+    fail: (version, reload = false) =>
+      ipcRenderer.invoke(IpcChannels.LIVE_CLIENT_FAIL_CHANNEL, { version, reload }),
+    onState: (listener) => {
+      const receive = (_event: Electron.IpcRendererEvent, state: unknown) => {
+        if (typeof state !== "object" || state === null) return;
+        listener(state as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.LIVE_CLIENT_STATE_CHANNEL, receive);
+      return () => ipcRenderer.removeListener(IpcChannels.LIVE_CLIENT_STATE_CHANNEL, receive);
+    },
+  },
   setUpdateChannel: (channel, minimumVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_SET_CHANNEL_CHANNEL, { channel, minimumVersion }),
   checkForUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_CHECK_CHANNEL),

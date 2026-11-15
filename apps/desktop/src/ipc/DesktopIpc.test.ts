@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { assert, it } from "@effect/vitest";
@@ -8,6 +9,43 @@ vi.mock("electron", () => ({}));
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { hasPendingDesktopClientWork } from "./liveClientWork.ts";
+
+it.effect(
+  "defers client activation while a native request is pending and releases on failure",
+  () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<string, string>();
+      const listeners = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
+      const ipc = DesktopIpc.make(
+        {
+          removeHandler: (channel) => {
+            listeners.delete(channel);
+          },
+          handle: (channel, listener) => {
+            listeners.set(channel, listener);
+          },
+          removeAllListeners: () => {},
+          on: () => {},
+        },
+        () => Effect.succeed(true),
+      );
+      yield* ipc.handle({
+        channel: "desktop:pick-folder",
+        handler: () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+      });
+      const result = Promise.resolve(
+        listeners.get("desktop:pick-folder")!({ sender: { id: 1 } }, undefined),
+      ).catch(() => "failed");
+      yield* Deferred.await(started);
+      assert.strictEqual(hasPendingDesktopClientWork(), true);
+      yield* Deferred.fail(finish, "cancelled");
+      assert.strictEqual(yield* Effect.promise(() => result), "failed");
+      assert.strictEqual(hasPendingDesktopClientWork(), false);
+    }),
+);
 
 it.effect("answers only the main window's top frame", () =>
   Effect.gen(function* () {
