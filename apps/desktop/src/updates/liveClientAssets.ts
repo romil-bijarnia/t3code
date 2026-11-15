@@ -86,6 +86,7 @@ export function createLiveClientAssets(initial: Generation) {
   append(active);
 
   return {
+    canRetainNewGeneration: () => retainedRoots.size < MAX_GENERATIONS,
     stage(input: Generation): StageResult {
       if (!NodePath.isAbsolute(input.root)) {
         return { status: "deferred", reason: "invalid-path", path: input.root };

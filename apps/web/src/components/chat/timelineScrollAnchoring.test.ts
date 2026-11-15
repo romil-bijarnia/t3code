@@ -28,8 +28,14 @@ it("preserves nondefault cached views and mutable disclosures in other threads",
   rememberTimelinePosition(prior, position, false);
   expect(hasLiveClientTimelineStateRisk(visible)).toBe(true);
   expect(hasLiveClientTimelineStateRisk(prior)).toBe(false);
-  rememberTimelinePosition(prior, { ...position, atEnd: true }, true);
+  rememberTimelinePosition(prior, position, true);
   expect(hasLiveClientTimelineStateRisk(visible)).toBe(false);
+  disclosures.runs.add("expanded-run" as RunId);
+  expect(hasLiveClientTimelineStateRisk(visible)).toBe(true);
+  disclosures.runs.clear();
+  disclosures.attempts.add("expanded-attempt" as RunAttemptId);
+  expect(hasLiveClientTimelineStateRisk(visible)).toBe(true);
+  disclosures.attempts.clear();
   disclosures.workGroups.add("expanded-group");
   expect(hasLiveClientTimelineStateRisk(visible)).toBe(true);
   disclosures.workGroups.clear();
@@ -39,5 +45,11 @@ it("preserves nondefault cached views and mutable disclosures in other threads",
   disclosures.workGroupState.scrollPositions.set("group", { entryId: "nested-entry", offset: 40 });
   expect(hasLiveClientTimelineStateRisk(visible)).toBe(true);
   disclosures.workGroupState.scrollPositions.clear();
+  expect(hasLiveClientTimelineStateRisk(visible)).toBe(false);
+  rememberTimelinePosition(
+    "plain-remembered",
+    { rowId: "plain", offsetWithinRow: 0, scrollOffset: 0, atEnd: true },
+    true,
+  );
   expect(hasLiveClientTimelineStateRisk(visible)).toBe(false);
 });

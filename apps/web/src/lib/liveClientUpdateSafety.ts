@@ -179,6 +179,7 @@ export function createLiveClientUpdateSafety(input: {
   };
   const events = [
     DOCUMENT_SAFETY_CHANGE,
+    "selectionchange",
     "scroll",
     "play",
     "pause",

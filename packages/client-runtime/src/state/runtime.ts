@@ -426,6 +426,15 @@ export async function executeAtomQuery<A, E>(
   );
 }
 
+const liveClientCommandOwners = Atom.make((get) => {
+  const owners = new Set<() => void>();
+  get.addFinalizer(() => {
+    for (const release of owners) release();
+    owners.clear();
+  });
+  return owners;
+}).pipe(Atom.keepAlive, Atom.withLabel("live-client:command-owners"));
+
 export function createRuntimeCommand<R, ER, W, A, E>(
   runtime: Atom.AtomRuntime<R, ER>,
   options: {
@@ -439,12 +448,18 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: async (registry, input) => {
-      // Retain queued calls too: a renderer reload would discard their scheduler lane.
-      const release = retainLiveClientWork();
-      try {
-        return await settleAtomCommandResult(() =>
-          scheduler.schedule(registry, concurrency, input, () => {
+    run: (registry, input) =>
+      settleAtomCommandResult(async () => {
+        // Queued and deduplicated callers have no execution scope of their own to release on disposal.
+        const owners = registry.get(liveClientCommandOwners);
+        const retained = retainLiveClientWork();
+        owners.add(retained);
+        const release = () => {
+          owners.delete(retained);
+          retained();
+        };
+        try {
+          return await scheduler.schedule(registry, concurrency, input, () => {
             const atom = runtime
               .atom(
                 options
@@ -453,12 +468,11 @@ export function createRuntimeCommand<R, ER, W, A, E>(
               )
               .pipe(Atom.withLabel(options.label));
             return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
-          }),
-        );
-      } finally {
-        release();
-      }
-    },
+          });
+        } finally {
+          release();
+        }
+      }),
   };
 }
 

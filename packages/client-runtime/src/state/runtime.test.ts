@@ -56,7 +56,11 @@ import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
-import { getLiveClientWorkCount, subscribeLiveClientWork } from "./live-client-work.ts";
+import {
+  getLiveClientWorkCount,
+  retainLiveClientWork,
+  subscribeLiveClientWork,
+} from "./live-client-work.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
@@ -1600,44 +1604,54 @@ describe("runtime command runner", () => {
     }
   });
 
-  it("releases live-update work when disposal interrupts an executing command", async () => {
-    const initialWork = getLiveClientWorkCount();
-    let markEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      markEntered = resolve;
-    });
-    let markInterrupted!: () => void;
-    const interrupted = new Promise<void>((resolve) => {
-      markInterrupted = resolve;
-    });
-    let markReleased!: () => void;
-    const released = new Promise<void>((resolve) => {
-      markReleased = resolve;
-    });
-    const unsubscribe = subscribeLiveClientWork(() => {
-      if (getLiveClientWorkCount() === initialWork) markReleased();
-    });
-    const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
-      label: "test.live-client-interrupted",
-      execute: () =>
-        Effect.sync(markEntered).pipe(
-          Effect.andThen(Effect.never),
-          Effect.onInterrupt(() => Effect.sync(markInterrupted)),
-        ),
-    });
-    const registry = AtomRegistry.make();
-    try {
-      void command.run(registry, undefined);
-      await entered;
-      expect(getLiveClientWorkCount()).toBe(initialWork + 1);
-      registry.dispose();
-      await Promise.all([interrupted, released]);
-      expect(getLiveClientWorkCount()).toBe(initialWork);
-    } finally {
-      registry.dispose();
-      unsubscribe();
-    }
-  });
+  it.each(["serial", "singleFlight", "latest", "parallel"] as const)(
+    "releases live-update work when disposal interrupts an executing command with %s callers",
+    async (mode) => {
+      const unrelatedWork = retainLiveClientWork();
+      const initialWork = getLiveClientWorkCount();
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        markEntered = resolve;
+      });
+      let markInterrupted!: () => void;
+      const interrupted = new Promise<void>((resolve) => {
+        markInterrupted = resolve;
+      });
+      let markReleased!: () => void;
+      const released = new Promise<void>((resolve) => {
+        markReleased = resolve;
+      });
+      let disposing = false;
+      const unsubscribe = subscribeLiveClientWork(() => {
+        if (disposing && getLiveClientWorkCount() < initialWork + 2) markReleased();
+      });
+      const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
+        label: "test.live-client-interrupted",
+        concurrency: { mode, key: () => "shared" },
+        execute: () =>
+          Effect.sync(markEntered).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Effect.sync(markInterrupted)),
+          ),
+      });
+      const registry = AtomRegistry.make();
+      try {
+        void command.run(registry, undefined);
+        await entered;
+        expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+        void command.run(registry, undefined);
+        expect(getLiveClientWorkCount()).toBe(initialWork + 2);
+        disposing = true;
+        registry.dispose();
+        await Promise.all([interrupted, released]);
+        expect(getLiveClientWorkCount()).toBe(initialWork);
+      } finally {
+        registry.dispose();
+        unsubscribe();
+        unrelatedWork();
+      }
+    },
+  );
 
   it.effect("releases a shared scheduler lane before the outer command finishes", () =>
     Effect.gen(function* () {

@@ -32,7 +32,9 @@ function fixture() {
   const getState = vi.fn(async () => ({ phase: "activating", currentVersion: "1.2.2" }));
   const fail = vi.fn(async (_version: string, _reload: boolean) => true);
   let notify = (_state: { phase: string; currentVersion: string }) => {};
-  const unsubscribe = vi.fn();
+  const unsubscribe = vi.fn(() => {
+    notify = () => {};
+  });
   const onState = (listener: typeof notify) => {
     notify = listener;
     return unsubscribe;
@@ -63,6 +65,34 @@ function fixture() {
 }
 
 describe("live client trial acknowledgement", () => {
+  it.each(["another editor", "a new composer draft"] as const)(
+    "does not overwrite %s when restoring focus",
+    async (intent) => {
+      using screen = fixture();
+      using focused = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+      const editor = document.createElement("div");
+      editor.contentEditable = "true";
+      editor.dataset.testid = "composer-editor";
+      const other = document.createElement("input");
+      screen.root.append(editor, other);
+      const destination = new URL(window.location.href);
+      destination.searchParams.set("__t3_live_client_focus", "composer");
+      window.history.replaceState(null, "", destination);
+      expect(await acknowledgeLiveClientBoot()).toBe(true);
+      if (intent === "another editor") other.focus();
+      else editor.textContent = "new text after the update";
+      const beforeFocus = document.activeElement;
+      focused.mockReturnValue(true);
+      window.dispatchEvent(new FocusEvent("focus"));
+      expect(document.activeElement).toBe(beforeFocus);
+      expect(editor.textContent).toBe(
+        intent === "another editor" ? "" : "new text after the update",
+      );
+      editor.remove();
+      other.remove();
+    },
+  );
+
   it("restores background composer focus only after the window is actually focused", async () => {
     using screen = fixture();
     using focused = vi.spyOn(document, "hasFocus").mockReturnValue(false);
@@ -168,7 +198,9 @@ describe("live client trial acknowledgement", () => {
         }),
     );
     const acknowledgement = acknowledgeLiveClientBoot();
+    expect(acknowledgeLiveClientBoot()).toBe(acknowledgement);
     await Promise.resolve();
+    expect(screen.acknowledge).toHaveBeenCalledOnce();
     expect(document.body.inert).toBe(true);
     expect(screen.root.inert).toBe(true);
     expect(new URL(window.location.href).searchParams.has("__t3_live_client_trial")).toBe(true);
@@ -212,19 +244,61 @@ describe("live client trial acknowledgement", () => {
   it("bounds hung IPC without unlocking unproven code or retaining deadline timers", async () => {
     using screen = fixture();
     using _timers = fakeTimers();
-    screen.acknowledge.mockImplementation(() => new Promise<boolean>(() => {}));
+    let lateAcknowledgement = (_accepted: boolean) => {};
+    screen.acknowledge.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          lateAcknowledgement = resolve;
+        }),
+    );
     screen.getState.mockImplementation(() => new Promise(() => {}));
     const pending = acknowledgeLiveClientBoot();
+    screen.publish({ phase: "applied", currentVersion: "1.2.2" });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(screen.root.inert).toBe(true);
     expect(document.body.inert).toBe(true);
     expect(screen.getState).toHaveBeenCalledOnce();
+    screen.publish({ phase: "activating", currentVersion: "1.2.3" });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(await pending).toBe(false);
     expect(screen.fail).toHaveBeenCalledExactlyOnceWith("1.2.3", true);
     expect(screen.root.inert).toBe(true);
     expect(document.body.inert).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+    expect(screen.unsubscribe).toHaveBeenCalledOnce();
+    lateAcknowledgement(true);
+    await Promise.resolve();
+    expect(document.body.inert).toBe(true);
+    screen.acknowledge.mockResolvedValue(true);
+    expect(await acknowledgeLiveClientBoot()).toBe(true);
+    expect(screen.acknowledge).toHaveBeenCalledTimes(2);
+    expect(screen.unsubscribe).toHaveBeenCalledTimes(2);
+    expect(document.body.inert).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not unlock a newer trial with an earlier trial's late acknowledgement", async () => {
+    using screen = fixture();
+    let accept = (_accepted: boolean) => {};
+    screen.acknowledge.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    const pending = acknowledgeLiveClientBoot();
+    await Promise.resolve();
+    const replacement = new URL(window.location.href);
+    replacement.searchParams.set("__t3_live_client_trial", "1.2.4");
+    window.history.replaceState(null, "", replacement);
+    screen.meta.content = "1.2.4";
+    document.documentElement.dataset.liveClientTrial = "1.2.4";
+    accept(true);
+    expect(await pending).toBe(false);
+    expect(document.body.inert).toBe(true);
+    expect(new URL(window.location.href).searchParams.get("__t3_live_client_trial")).toBe("1.2.4");
+    expect(document.documentElement.dataset.liveClientTrial).toBe("1.2.4");
+    expect(screen.fail).not.toHaveBeenCalled();
     expect(screen.unsubscribe).toHaveBeenCalledOnce();
   });
 

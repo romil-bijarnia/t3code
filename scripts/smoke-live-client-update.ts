@@ -45,6 +45,7 @@ const { values } = NodeUtil.parseArgs({
     "active-work": { type: "boolean", default: false },
     background: { type: "boolean", default: false },
     fault: { type: "string" },
+    updates: { type: "string", default: "1" },
   },
 });
 if (!values.executable || !values.app || !values["candidate-client"] || !values["artifacts-dir"]) {
@@ -53,11 +54,38 @@ if (!values.executable || !values.app || !values["candidate-client"] || !values[
   );
 }
 const fault = values.fault;
-if (fault !== undefined && !["signature", "missing-entry", "crash"].includes(fault)) {
-  throw new Error("--fault must be signature, missing-entry or crash.");
+const transferFault =
+  fault !== undefined &&
+  [
+    "corrupt-asset",
+    "truncated-asset",
+    "asset-http",
+    "oversized-manifest",
+    "stalled-manifest",
+  ].includes(fault);
+const bootFault = fault === "missing-entry" || fault === "crash";
+if (
+  fault !== undefined &&
+  ![
+    "signature",
+    "missing-entry",
+    "crash",
+    "corrupt-asset",
+    "truncated-asset",
+    "asset-http",
+    "oversized-manifest",
+    "stalled-manifest",
+  ].includes(fault)
+) {
+  throw new Error("Unknown live-client smoke fault.");
 }
-if (fault && values["active-work"])
-  throw new Error("Fault scenarios cannot be combined with --active-work.");
+if (fault && !transferFault && values["active-work"])
+  throw new Error("Boot/signature fault scenarios cannot be combined with --active-work.");
+const updateAttempts = Number(values.updates);
+if (!Number.isSafeInteger(updateAttempts) || updateAttempts < 1 || updateAttempts > 8)
+  throw new Error("--updates must be an integer from 1 to 8.");
+if (fault && updateAttempts !== 1)
+  throw new Error("Fault fixtures cannot combine multiple updates.");
 const executable = NodePath.resolve(values.executable);
 const appDirectory = NodePath.resolve(values.app);
 const candidateClient = NodePath.resolve(values["candidate-client"]);
@@ -202,8 +230,8 @@ function observeFaultRecovery(
 
 try {
   requireTrue(
-    !(values.background && values.fault),
-    "Background mode is a positive handover test, not a fault fixture.",
+    !(values.background && values.fault && !transferFault),
+    "Background mode cannot combine boot/signature fault fixtures.",
   );
   requireTrue(
     isLinux,
@@ -285,6 +313,11 @@ try {
     };
   }
   let published = false;
+  let injectTransferFault = transferFault;
+  let manifestStalled!: () => void;
+  const stalledManifest = new Promise<void>((resolve) => {
+    manifestStalled = resolve;
+  });
   const requests: string[] = [];
   server = NodeHttp.createServer((request, response) => {
     void (async () => {
@@ -293,6 +326,15 @@ try {
       response.setHeader("cache-control", "no-store");
       if (pathname === "/manifest.json") {
         response.setHeader("content-type", "application/json");
+        if (published && injectTransferFault && fault === "oversized-manifest") {
+          response.end(Buffer.alloc(3 * 1024 * 1024 + 1, 32));
+          return;
+        }
+        if (published && injectTransferFault && fault === "stalled-manifest") {
+          response.write("{");
+          manifestStalled();
+          return;
+        }
         response.end(JSON.stringify(published ? candidateEnvelope : baselineEnvelope));
         return;
       }
@@ -304,6 +346,17 @@ try {
         return;
       }
       const bytes = await NodeFSP.readFile(file);
+      if (published && injectTransferFault && relative === "client/index.html") {
+        if (fault === "asset-http") response.writeHead(503).end();
+        else if (fault === "truncated-asset")
+          response.end(bytes.subarray(0, Math.floor(bytes.length / 2)));
+        else {
+          const corrupted = Buffer.from(bytes);
+          corrupted[0] = corrupted[0]! ^ 1;
+          response.end(corrupted);
+        }
+        return;
+      }
       response.end(bytes);
     })().catch(() => {
       if (!response.headersSent) response.writeHead(404);
@@ -435,12 +488,36 @@ try {
   await page.getByText(FILE_NAME, { exact: true }).first().waitFor();
   const offeredAt = performance.now();
   published = true;
-  await page.evaluate(() => (window as SmokeWindow).desktopBridge!.checkForUpdate());
+  const checking = page.evaluate(() => (window as SmokeWindow).desktopBridge!.checkForUpdate());
+  if (fault === "stalled-manifest") {
+    step = "checking actual input responsiveness during an incomplete manifest response";
+    await stalledManifest;
+    await composer.press("Home");
+    await page.keyboard.insertText("!");
+    const responsive = await page.evaluate(() => ({
+      text: document.querySelector('[data-testid="composer-editor"]')?.textContent,
+      inert: document.body.inert || Boolean(document.getElementById("root")?.inert),
+      version: document.querySelector<HTMLMetaElement>('meta[name="t3-live-client-version"]')
+        ?.content,
+    }));
+    requireTrue(
+      responsive.text?.includes("!") &&
+        responsive.text.includes(DRAFT) &&
+        !responsive.inert &&
+        responsive.version === baselineVersion,
+      "A pending download blocked real composer input.",
+    );
+    result.inputDuringDownload = responsive;
+    console.log(
+      "The incomplete manifest request is pending; real composer input remains responsive.",
+    );
+  }
+  await checking;
   const prepared = await page.evaluate(() =>
     (window as SmokeWindow).desktopBridge!.liveClientUpdates!.getState(),
   );
   requireTrue(
-    fault === "signature"
+    fault === "signature" || transferFault
       ? prepared.phase === "deferred"
       : prepared.phase === "ready" && prepared.candidateVersion === candidateVersion,
     `Candidate was not prepared: ${prepared.phase} (${prepared.reason ?? "no reason"}).`,
@@ -463,6 +540,55 @@ try {
   );
   result.deferred = deferred;
   await page.screenshot({ path: NodePath.join(artifactsDir, "draft-defers-update.png") });
+
+  if (transferFault) {
+    step = "verifying failed transfer cleanup and same-version retry";
+    requireTrue(
+      prepared.reason === "validation-or-download-failed",
+      "Transfer fault was not refused by validation.",
+    );
+    requireTrue(
+      !navigation.some((url) => new URL(url).searchParams.has("__t3_live_client_trial")),
+      "A damaged transfer navigated to a trial.",
+    );
+    const cacheRoot = await app.evaluate(({ app }) => app.getPath("userData"));
+    const sessionRoot = NodePath.join(cacheRoot, "live-client-cache");
+    const sessions = await NodeFSP.readdir(sessionRoot);
+    const remaining = (
+      await Promise.all(sessions.map((name) => NodeFSP.readdir(NodePath.join(sessionRoot, name))))
+    ).flat();
+    requireTrue(
+      remaining.length === 0,
+      "Failed transfer left staging or a published bundle behind.",
+    );
+    result.transferRefusal = {
+      state: prepared,
+      cacheEntries: remaining,
+      requests: requests.length,
+    };
+    injectTransferFault = false;
+    await page.evaluate(() => (window as SmokeWindow).desktopBridge!.checkForUpdate());
+    const retry = await page.evaluate(() =>
+      (window as SmokeWindow).desktopBridge!.liveClientUpdates!.getState(),
+    );
+    requireTrue(
+      retry.phase === "ready" && retry.candidateVersion === candidateVersion,
+      "A healthy retry of the same version was stranded.",
+    );
+    const preserved = await page.evaluate(async () => ({
+      version: document.querySelector<HTMLMetaElement>('meta[name="t3-live-client-version"]')
+        ?.content,
+      fileBytes: await (window as SmokeWindow).__liveClientSmokeFile?.text(),
+      text: document.querySelector('[data-testid="composer-editor"]')?.textContent,
+    }));
+    requireTrue(
+      preserved.version === baselineVersion &&
+        preserved.fileBytes === FILE_CONTENT &&
+        preserved.text?.includes(DRAFT),
+      "Transfer retry changed the current document or unsent bytes.",
+    );
+    result.transferRetry = { state: retry, preserved };
+  }
 
   if (fault === "signature") {
     step = "verifying signature refusal leaves the original page and processes untouched";
@@ -503,7 +629,7 @@ try {
     const windowHandle = await app.browserWindow(page);
     const contentsId = await windowHandle.evaluate((window) => window.webContents.id);
     await windowHandle.dispose();
-    const recovery = fault
+    const recovery = bootFault
       ? observeFaultRecovery(app, contentsId, candidateVersion, baselineVersion, fault === "crash")
       : null;
     void recovery?.catch(() => undefined);
@@ -644,6 +770,201 @@ try {
       );
       await page.getByText(THREAD_MESSAGE).waitFor();
       result.activationMs = performance.now() - activationAt;
+      let activeVersion = candidateVersion;
+      let generationLimit = false;
+      if (updateAttempts > 1) {
+        step = "exercising consecutive signed generations and retained lazy assets";
+        requireTrue(
+          /^\d+\.\d+\.\d+$/.test(candidateVersion),
+          "Multiple-generation fixtures require a stable version.",
+        );
+        const [major, minor, patch] = candidateVersion.split(".").map(Number);
+        const firstManifest = JSON.parse(candidateEnvelope.manifest) as LiveClientManifest;
+        const firstPaths = new Set(firstManifest.files.map((file) => file.path));
+        const baselinePaths = new Set(baseline.files.map((file) => file.path));
+        const oldProbe = baseline.files.find(
+          (file) => file.path.endsWith(".js") && !firstPaths.has(file.path),
+        );
+        const newProbe = firstManifest.files.find(
+          (file) => file.path.endsWith(".js") && !baselinePaths.has(file.path),
+        );
+        requireTrue(oldProbe && newProbe, "Generation fixture needs distinct old/new lazy assets.");
+        const probes = [oldProbe, newProbe];
+        const generations: Record<string, unknown>[] = [
+          { version: candidateVersion, phase: "applied" },
+        ];
+        result.generations = { attempts: generations };
+        for (let attempt = 1; attempt < updateAttempts; attempt += 1) {
+          const nextVersion = `${major}.${minor}.${patch! + attempt}`;
+          step = `preparing consecutive generation ${nextVersion}`;
+          if (focusSession && backgroundWindow) {
+            // A renderer swap can reinitialize Playwright's default main-frame emulation.
+            await focusSession.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+            const focus = await app.evaluate(
+              ({ BrowserWindow }, ids) => ({
+                main: BrowserWindow.fromId(ids.mainId)?.isFocused(),
+                other: BrowserWindow.fromId(ids.id)?.isFocused(),
+              }),
+              backgroundWindow,
+            );
+            const documentFocused = await page.evaluate(() => document.hasFocus());
+            generations.push({ before: nextVersion, nativeFocus: focus, documentFocused });
+            requireTrue(
+              focus.main === false && focus.other === true && !documentFocused,
+              "Background focus fixture diverged after a renderer swap.",
+            );
+          }
+          // Real selection holds the old document without manufacturing store or IPC state.
+          await page.getByText(THREAD_MESSAGE).evaluate((node) => {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            window.getSelection()?.removeAllRanges();
+            window.getSelection()?.addRange(range);
+            document.dispatchEvent(new Event("selectionchange"));
+          });
+          const entry = NodePath.join(feedDirectory, "client/index.html");
+          const previousHtml = await NodeFSP.readFile(entry, "utf8");
+          const html = previousHtml.replace(
+            /(<meta\s+name=["']t3-live-client-version["']\s+content=["'])[^"']+(["'][^>]*>)/i,
+            (_tag, prefix: string, suffix: string) => `${prefix}${nextVersion}${suffix}`,
+          );
+          requireTrue(
+            clientVersion(html) === nextVersion,
+            "Generation entry metadata was not replaced.",
+          );
+          await NodeFSP.writeFile(entry, html);
+          const nextManifest: LiveClientManifest = {
+            ...firstManifest,
+            version: nextVersion,
+            files: firstManifest.files.map((file) =>
+              file.path === "index.html"
+                ? {
+                    path: file.path,
+                    sha256: NodeCrypto.createHash("sha256").update(html).digest("hex"),
+                    size: Buffer.byteLength(html),
+                  }
+                : file,
+            ),
+          };
+          const manifest = JSON.stringify(nextManifest);
+          candidateEnvelope = {
+            manifest,
+            signature: NodeCrypto.sign(null, Buffer.from(manifest), privateKey).toString("base64"),
+          };
+          const requestOffset = requests.length;
+          await page.evaluate(() => (window as SmokeWindow).desktopBridge!.checkForUpdate());
+          const staged = await page.evaluate(async () => ({
+            state: await (window as SmokeWindow).desktopBridge!.liveClientUpdates!.getState(),
+            loaded: document.querySelector<HTMLMetaElement>('meta[name="t3-live-client-version"]')
+              ?.content,
+            selected: window.getSelection()?.toString(),
+          }));
+          requireTrue(
+            staged.loaded === activeVersion && staged.selected?.includes(THREAD_MESSAGE),
+            "A later generation discarded selected text before release.",
+          );
+          generationLimit = attempt === 7;
+          requireTrue(
+            generationLimit
+              ? staged.state.phase === "deferred" && staged.state.reason === "generation-limit"
+              : staged.state.phase === "ready" && staged.state.candidateVersion === nextVersion,
+            "Unexpected generation admission result.",
+          );
+          if (generationLimit) {
+            const refusedRequests = requests.slice(requestOffset);
+            requireTrue(
+              JSON.stringify(refusedRequests) === JSON.stringify(["/manifest.json"]),
+              "An exhausted generation budget still downloaded assets.",
+            );
+            const recheckOffset = requests.length;
+            await page.evaluate(() => (window as SmokeWindow).desktopBridge!.checkForUpdate());
+            const recheckRequests = requests.slice(recheckOffset);
+            requireTrue(
+              JSON.stringify(recheckRequests) === JSON.stringify(["/manifest.json"]),
+              "A capacity recheck repeated an inapplicable bundle transfer.",
+            );
+            generations.push({
+              offered: nextVersion,
+              refusalRequests: refusedRequests,
+              recheckRequests,
+            });
+          }
+          try {
+            await page.evaluate(() => {
+              window.getSelection()?.removeAllRanges();
+              document.dispatchEvent(new Event("selectionchange"));
+            });
+          } catch (error) {
+            if (
+              !(
+                error instanceof Error &&
+                /Execution context was destroyed|Cannot find context/.test(error.message)
+              )
+            )
+              throw error;
+          }
+          if (!generationLimit) {
+            step = `activating consecutive generation ${nextVersion}`;
+            await page.waitForFunction(
+              (version) =>
+                document.querySelector<HTMLMetaElement>('meta[name="t3-live-client-version"]')
+                  ?.content === version &&
+                !new URL(location.href).searchParams.has("__t3_live_client_trial") &&
+                !document.body.inert &&
+                !document.getElementById("root")?.inert,
+              nextVersion,
+            );
+            await page.getByText(THREAD_MESSAGE).waitFor();
+            activeVersion = nextVersion;
+          }
+          const assets = await page.evaluate(async (files) => {
+            const verified = [];
+            for (const file of files) {
+              const response = await window.fetch(
+                `/${file.path.split("/").map(encodeURIComponent).join("/")}`,
+              );
+              if (!response.ok) throw new Error("A retained lazy asset is unavailable.");
+              const bytes = await response.arrayBuffer();
+              const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+                .map((n) => n.toString(16).padStart(2, "0"))
+                .join("");
+              if (bytes.byteLength !== file.size || hash !== file.sha256)
+                throw new Error("Retained asset bytes changed.");
+              verified.push({ path: file.path, sha256: hash });
+            }
+            return verified;
+          }, probes);
+          generations.push({
+            offered: nextVersion,
+            active: activeVersion,
+            phase: generationLimit ? "deferred" : "applied",
+            retainedAssets: assets,
+          });
+        }
+        const profile = await app.evaluate(({ app }) => app.getPath("userData"));
+        const cache = NodePath.join(profile, "live-client-cache");
+        const directories = (
+          await Promise.all(
+            (await NodeFSP.readdir(cache)).map((name) =>
+              NodeFSP.readdir(NodePath.join(cache, name)),
+            ),
+          )
+        ).flat();
+        requireTrue(
+          !directories.some((name) => name.startsWith(".staging-")),
+          "Consecutive updates left staging behind.",
+        );
+        requireTrue(
+          directories.length === Math.min(updateAttempts, 7),
+          "Unexpected retained-generation directory count.",
+        );
+        result.generations = {
+          fixture:
+            "The first transition uses separately built clients; later signed fixtures change version metadata only.",
+          attempts: generations,
+          cacheEntries: directories,
+        };
+      }
       const after = await page.evaluate(async () => ({
         state: await (window as SmokeWindow).desktopBridge!.liveClientUpdates!.getState(),
         loadedVersion: document.querySelector<HTMLMetaElement>(
@@ -688,9 +1009,9 @@ try {
         "Backend process identities changed.",
       );
       requireTrue(
-        after.loadedVersion === candidateVersion &&
-          after.state.phase === "applied" &&
-          after.state.currentVersion === candidateVersion &&
+        after.loadedVersion === activeVersion &&
+          after.state.phase === (generationLimit ? "deferred" : "applied") &&
+          after.state.currentVersion === activeVersion &&
           !after.trial &&
           !after.inert,
         "The new renderer did not finish healthy activation.",

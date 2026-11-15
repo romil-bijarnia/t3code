@@ -38,6 +38,13 @@ async function fixture() {
   let corruptSignature = false;
   let indexText = newClientIndex;
   let assetText: string | null = null;
+  let assetFiles: Record<string, string> = { "assets/new.js": "new logic" };
+  type ResponseFactory = (
+    url: URL,
+    signal: AbortSignal | null | undefined,
+  ) => Response | Promise<Response>;
+  let manifestResponse: ResponseFactory | null = null;
+  let assetResponse: ResponseFactory | null = null;
   let gate: { started: PromiseWithResolvers<void>; release: PromiseWithResolvers<void> } | null =
     null;
   const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -53,13 +60,17 @@ async function fixture() {
           }),
         ]);
       }
+      if (manifestResponse) return manifestResponse(url, init?.signal);
       const manifest = JSON.stringify(candidate);
       const signature = NodeCrypto.sign(null, Buffer.from(manifest), keys.privateKey).toString(
         "base64",
       );
       return Response.json({ manifest, signature: corruptSignature ? "invalid" : signature });
     }
-    const text = assetText ?? (url.pathname.endsWith("index.html") ? indexText : "new logic");
+    if (assetResponse) return assetResponse(url, init?.signal);
+    const relative = decodeURIComponent(url.pathname.split("/client/")[1] ?? "");
+    const text = assetText ?? (relative === "index.html" ? indexText : assetFiles[relative]);
+    if (text === undefined) return new Response("missing", { status: 404 });
     return new Response(text);
   });
   const onRollback = vi.fn();
@@ -88,11 +99,36 @@ async function fixture() {
     corruptAsset: (text: string) => {
       assetText = text;
     },
+    setResponse: (kind: "manifest" | "asset", response: ResponseFactory) => {
+      if (kind === "manifest") manifestResponse = response;
+      else assetResponse = response;
+    },
+    repairDownloads: () => {
+      corruptSignature = false;
+      assetText = null;
+      manifestResponse = null;
+      assetResponse = null;
+    },
     setIndex: (text: string) => {
       indexText = text;
       candidate = {
         ...candidate,
-        files: [file("index.html", text), file("assets/new.js", "new logic")],
+        files: [
+          file("index.html", text),
+          ...Object.entries(assetFiles).map(([name, contents]) => file(name, contents)),
+        ],
+      };
+    },
+    setRelease: (version: string, files: Record<string, string>) => {
+      assetFiles = files;
+      indexText = `<meta name="t3-live-client-version" content="${version}">new client`;
+      candidate = {
+        ...candidate,
+        version,
+        files: [
+          file("index.html", indexText),
+          ...Object.entries(files).map(([name, contents]) => file(name, contents)),
+        ],
       };
     },
     blockManifest: () => {
@@ -144,15 +180,46 @@ describe("live client updater", () => {
     "corrupt",
     "truncated",
     "oversized",
+    "manifest-http",
+    "asset-http",
+    "asset-stream",
   ] as const)("keeps the original code intact after %s rejection", async (failure) => {
     await using f = await fixture();
     if (failure === "signature") f.corruptSignature();
     if (failure === "runtime") f.setCandidate({ runtimeId: "b".repeat(64) });
     if (failure === "channel") f.setCandidate({ channel: "nightly", version: "1.0.1-nightly.1" });
     if (failure === "downgrade") f.setCandidate({ version: "0.9.0" });
-    if (failure === "corrupt") f.corruptAsset("bad client");
+    if (failure === "corrupt")
+      f.setResponse(
+        "asset",
+        (url) =>
+          new Response(
+            url.pathname.endsWith("index.html")
+              ? "x".repeat(Buffer.byteLength(newClientIndex))
+              : "new logic",
+          ),
+      );
     if (failure === "truncated") f.corruptAsset("x");
     if (failure === "oversized") f.corruptAsset("x".repeat(500));
+    if (failure === "manifest-http")
+      f.setResponse("manifest", () => new Response("unavailable", { status: 503 }));
+    if (failure === "asset-http")
+      f.setResponse("asset", () => new Response("missing", { status: 404 }));
+    if (failure === "asset-stream")
+      f.setResponse("asset", () => {
+        let pulled = false;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (pulled) controller.error(new Error("connection lost during asset download"));
+              else {
+                pulled = true;
+                controller.enqueue(new TextEncoder().encode("x"));
+              }
+            },
+          }),
+        );
+      });
     await f.updater.check();
     expect(f.updater.activate("1.0.1")).toBe(false);
     expect(f.updater.getState().currentVersion).toBe("1.0.0");
@@ -161,6 +228,20 @@ describe("live client updater", () => {
     );
     expect(await NodeFSP.readdir(f.cacheRoot).catch(() => [])).toEqual([]);
     expect(f.onRollback).not.toHaveBeenCalled();
+    if (!["runtime", "channel", "downgrade"].includes(failure)) {
+      f.repairDownloads();
+      await f.updater.check();
+      expect(f.updater.getState()).toMatchObject({
+        phase: "ready",
+        currentVersion: "1.0.0",
+        candidateVersion: "1.0.1",
+      });
+      expect(f.updater.activate("1.0.1")).toBe(true);
+      expect(f.updater.acknowledge("1.0.1")).toBe(true);
+      expect(await NodeFSP.readFile(f.updater.resolveAsset("index.html")!, "utf8")).toBe(
+        newClientIndex,
+      );
+    }
   });
 
   it("rolls back a failed boot and never retries that version automatically", async () => {
@@ -279,5 +360,156 @@ describe("live client updater", () => {
     expect(f.updater.getState()).toMatchObject({ phase: "deferred", candidateVersion: "1.0.2" });
     expect(f.updater.activate("1.0.1")).toBe(false);
     expect(await NodeFSP.readdir(f.cacheRoot)).toEqual([]);
+  });
+
+  it("keeps a verified pending release when a later concurrent check fails", async () => {
+    await using f = await fixture();
+    await f.updater.check();
+    const gate = f.blockManifest();
+    f.setResponse("manifest", () => new Response("unavailable", { status: 503 }));
+    const check = f.updater.check();
+    await gate.started.promise;
+    expect(f.updater.activate("1.0.1")).toBe(false);
+    gate.release.resolve();
+    await check;
+    expect(f.updater.getState()).toMatchObject({
+      phase: "ready",
+      candidateVersion: "1.0.1",
+      currentVersion: "1.0.0",
+    });
+    expect(f.updater.activate("1.0.1")).toBe(true);
+    expect(f.updater.acknowledge("1.0.1")).toBe(true);
+    expect(await NodeFSP.readFile(f.updater.resolveAsset("assets/new.js")!, "utf8")).toBe(
+      "new logic",
+    );
+  });
+
+  it("cancels an asset-stage download and removes partial staging without touching baseline", async () => {
+    await using f = await fixture();
+    const started = Promise.withResolvers<void>();
+    f.setResponse(
+      "asset",
+      (_url, signal) =>
+        new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("cancelled asset")), {
+            once: true,
+          });
+          started.resolve();
+        }),
+    );
+    const check = f.updater.check();
+    await started.promise;
+    await f.updater.dispose();
+    await check;
+    expect(await NodeFSP.readdir(f.cacheRoot)).toEqual([]);
+    expect(await NodeFSP.readFile(f.updater.resolveAsset("index.html")!, "utf8")).toBe(
+      "old client",
+    );
+    expect(f.updater.activate("1.0.1")).toBe(false);
+  });
+
+  it.each(["superseded", "incompatible", "disposed"] as const)(
+    "retains already served lazy chunks when an editing-race candidate is %s",
+    async (operation) => {
+      await using f = await fixture();
+      await f.updater.check();
+      expect(f.updater.activate("1.0.1")).toBe(true);
+      expect(f.updater.failActivation("1.0.1", false)).toBe(true);
+      const retained = f.updater.resolveAsset("assets/new.js")!;
+      if (operation === "disposed") await f.updater.dispose();
+      else {
+        f.setRelease("1.0.2", { "assets/two.js": "second logic" });
+        if (operation === "incompatible") f.setCandidate({ runtimeId: "b".repeat(64) });
+        await f.updater.check();
+        if (operation === "superseded") {
+          expect(f.updater.activate("1.0.2")).toBe(true);
+          expect(f.updater.acknowledge("1.0.2")).toBe(true);
+        } else expect(f.updater.activate("1.0.1")).toBe(false);
+      }
+      expect(await NodeFSP.readFile(retained, "utf8")).toBe("new logic");
+      expect(f.updater.resolveAsset("assets/new.js")).toBe(retained);
+    },
+  );
+
+  it("rolls back to the last applied version while retaining all generations across later releases", async () => {
+    await using f = await fixture();
+    await f.updater.check();
+    expect(f.updater.activate("1.0.1")).toBe(true);
+    expect(f.updater.acknowledge("1.0.1")).toBe(true);
+    f.setRelease("1.0.2", { "assets/two.js": "second logic" });
+    await f.updater.check();
+    expect(f.updater.activate("1.0.2")).toBe(true);
+    expect(f.updater.failActivation("1.0.2")).toBe(true);
+    expect(f.updater.getState()).toMatchObject({ phase: "deferred", currentVersion: "1.0.1" });
+    expect(await NodeFSP.readFile(f.updater.resolveAsset("index.html")!, "utf8")).toBe(
+      newClientIndex,
+    );
+    f.setRelease("1.0.3", { "assets/three.js": "third logic" });
+    await f.updater.check();
+    expect(f.updater.activate("1.0.3")).toBe(true);
+    expect(f.updater.acknowledge("1.0.3")).toBe(true);
+    expect(f.updater.acknowledge("1.0.2")).toBe(false);
+    expect(f.updater.failActivation("1.0.2")).toBe(false);
+    expect(f.updater.getState()).toMatchObject({ phase: "applied", currentVersion: "1.0.3" });
+    for (const [name, contents] of Object.entries({
+      "assets/new.js": "new logic",
+      "assets/two.js": "second logic",
+      "assets/three.js": "third logic",
+    })) {
+      expect(await NodeFSP.readFile(f.updater.resolveAsset(name)!, "utf8")).toBe(contents);
+    }
+  });
+
+  it("refuses new generations at capacity before downloading assets, including later rechecks", async () => {
+    await using f = await fixture();
+    for (let patch = 1; patch <= 7; patch += 1) {
+      const version = `1.0.${patch}`;
+      f.setRelease(version, { [`assets/release-${patch}.js`]: `retained release ${patch}` });
+      await f.updater.check();
+      expect(f.updater.activate(version)).toBe(true);
+      if (patch % 2 === 1) {
+        expect(f.updater.failActivation(version, false)).toBe(true);
+        if (patch === 7) {
+          // A full budget must not reject the already-retained pending root or its safe retry.
+          const beforeRecheck = f.fetch.mock.calls.length;
+          await f.updater.check();
+          expect(f.updater.getState()).toMatchObject({ phase: "ready", candidateVersion: version });
+          expect(
+            f.fetch.mock.calls
+              .slice(beforeRecheck)
+              .map(([request]) => new URL(String(request)).pathname),
+          ).toEqual(["/live/manifest.json"]);
+          expect(f.updater.activate(version)).toBe(true);
+          expect(f.updater.acknowledge(version)).toBe(true);
+        }
+      } else expect(f.updater.acknowledge(version)).toBe(true);
+    }
+    const retainedDirectories = await NodeFSP.readdir(f.cacheRoot);
+    const entry = f.updater.resolveAsset("index.html")!;
+    const oldIndex = await NodeFSP.readFile(entry, "utf8");
+    f.setRelease("1.0.8", { "assets/release-8.js": "not admitted" });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const beforeCheck = f.fetch.mock.calls.length;
+      await f.updater.check();
+      expect(f.updater.getState()).toMatchObject({
+        phase: "deferred",
+        currentVersion: "1.0.7",
+        candidateVersion: "1.0.8",
+        reason: "generation-limit",
+      });
+      expect(
+        f.fetch.mock.calls.slice(beforeCheck).map(([request]) => new URL(String(request)).pathname),
+      ).toEqual(["/live/manifest.json"]);
+      expect(f.updater.activate("1.0.8")).toBe(false);
+      expect(f.updater.resolveAsset("index.html")).toBe(entry);
+      expect(await NodeFSP.readFile(entry, "utf8")).toBe(oldIndex);
+      expect(await NodeFSP.readdir(f.cacheRoot)).toEqual(retainedDirectories);
+      expect(f.updater.resolveAsset("assets/release-8.js")).toBeUndefined();
+      for (let patch = 1; patch <= 7; patch += 1) {
+        expect(
+          await NodeFSP.readFile(f.updater.resolveAsset(`assets/release-${patch}.js`)!, "utf8"),
+        ).toBe(`retained release ${patch}`);
+      }
+    }
   });
 });

@@ -163,6 +163,18 @@ export function createLiveClientUpdater(options: LiveClientUpdaterOptions) {
         publish({ phase: "ready", reason: null });
         return;
       }
+      // Downloads use fresh roots; same-root cancellation retries have already returned above.
+      if (!assets.canRetainNewGeneration()) {
+        if (pending && !pending.retained)
+          await NodeFSP.rm(pending.root, { recursive: true, force: true });
+        pending = null;
+        publish({
+          phase: "deferred",
+          candidateVersion: manifest.version,
+          reason: "generation-limit",
+        });
+        return;
+      }
       if (!baselineVerified) {
         await verifyBundle(options.baselineRoot, options.baseline);
         baselineVerified = true;

@@ -93,41 +93,83 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
-  it.effect.each(["success", "failure", "defect", "interruption"] as const)(
-    "retains live-update work through direct unary request %s",
-    (outcome) =>
-      Effect.gen(function* () {
-        const initialWork = getLiveClientWorkCount();
-        const started = yield* Deferred.make<void>();
-        const finish = yield* Deferred.make<void>();
-        const client = {
-          [WS_METHODS.vcsRefreshBranch]: () =>
-            Effect.gen(function* () {
-              yield* Deferred.succeed(started, undefined);
-              yield* Deferred.await(finish);
-              if (outcome === "failure") return yield* Effect.fail("request failed");
-              if (outcome === "defect") return yield* Effect.die("request defect");
-            }),
-        } as unknown as WsRpcProtocolClient;
-        const { supervisor } = yield* makeHarness();
-        const request = yield* requestInSession(session(client), WS_METHODS.vcsRefreshBranch, {
-          cwd: "/repo",
-        }).pipe(
+  it.effect.each([
+    "success",
+    "failure",
+    "defect",
+    "interruption",
+    "authorization-interruption",
+  ] as const)("retains live-update work through direct unary request %s", (outcome) =>
+    Effect.gen(function* () {
+      const initialWork = getLiveClientWorkCount();
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.vcsRefreshBranch]: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(finish);
+            if (outcome === "failure") return yield* Effect.fail("request failed");
+            if (outcome === "defect") return yield* Effect.die("request defect");
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { supervisor } = yield* makeHarness();
+      const request = yield* requestInSession(session(client), WS_METHODS.vcsRefreshBranch, {
+        cwd: "/repo",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: () =>
+            outcome === "authorization-interruption"
+              ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish)))
+              : Effect.void,
+        }),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+      if (outcome === "interruption" || outcome === "authorization-interruption")
+        yield* Fiber.interrupt(request);
+      else {
+        yield* Deferred.succeed(finish, undefined);
+        const result = yield* Fiber.join(request);
+        expect(result._tag).toBe(outcome === "success" ? "Success" : "Failure");
+      }
+      expect(getLiveClientWorkCount()).toBe(initialWork);
+    }),
+  );
+
+  it.effect("keeps an overlapping unary request retained when its peer is interrupted", () =>
+    Effect.gen(function* () {
+      const initialWork = getLiveClientWorkCount();
+      const entered = yield* Queue.unbounded<string>();
+      const firstFinish = yield* Deferred.make<void>();
+      const secondFinish = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.vcsRefreshBranch]: (input: { readonly cwd: string }) =>
+          Queue.offer(entered, input.cwd).pipe(
+            Effect.andThen(Deferred.await(input.cwd === "/first" ? firstFinish : secondFinish)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { supervisor } = yield* makeHarness();
+      const start = (cwd: string) =>
+        requestInSession(session(client), WS_METHODS.vcsRefreshBranch, { cwd }).pipe(
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
-          Effect.exit,
           Effect.forkChild,
         );
-        yield* Deferred.await(started);
-        expect(getLiveClientWorkCount()).toBe(initialWork + 1);
-        if (outcome === "interruption") yield* Fiber.interrupt(request);
-        else {
-          yield* Deferred.succeed(finish, undefined);
-          const result = yield* Fiber.join(request);
-          expect(result._tag).toBe(outcome === "success" ? "Success" : "Failure");
-        }
-        expect(getLiveClientWorkCount()).toBe(initialWork);
-      }),
+      const first = yield* start("/first");
+      expect(yield* Queue.take(entered)).toBe("/first");
+      const second = yield* start("/second");
+      expect(yield* Queue.take(entered)).toBe("/second");
+      expect(getLiveClientWorkCount()).toBe(initialWork + 2);
+      yield* Fiber.interrupt(first);
+      expect(getLiveClientWorkCount()).toBe(initialWork + 1);
+      yield* Deferred.succeed(secondFinish, undefined);
+      yield* Fiber.join(second);
+      expect(getLiveClientWorkCount()).toBe(initialWork);
+    }),
   );
 
   it.effect("releases direct unary work when request construction throws", () =>

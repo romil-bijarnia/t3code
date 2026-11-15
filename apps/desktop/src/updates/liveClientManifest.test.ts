@@ -64,6 +64,15 @@ describe("live client manifest", () => {
         f.publicKey,
       ),
     ).toThrow("size limit");
+    expect(() =>
+      verifyManifest(
+        {
+          manifest: "é".repeat(LIVE_CLIENT_MANIFEST_MAX_BYTES / 2 + 1),
+          signature: envelope.signature,
+        },
+        f.publicKey,
+      ),
+    ).toThrow("size limit");
     const rsa = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
     expect(() =>
       verifyManifest(envelope, rsa.publicKey.export({ format: "pem", type: "spki" }).toString()),
@@ -84,6 +93,9 @@ describe("live client manifest", () => {
     "C:/x",
     "assets/CON.txt",
     "assets/x.",
+    "assets/x ",
+    "assets/\ud800",
+    "assets/e\u0301.js",
   ])("rejects noncanonical path %s", (name) => {
     const f = fixture();
     expect(() =>
@@ -127,6 +139,13 @@ describe("live client manifest", () => {
     await using d = await directory();
     await NodeFSP.writeFile(NodePath.join(d.root, "index.html"), "ok");
     await verifyBundle(d.root, f.manifest);
+    await expect(
+      verifyBundle(d.root, { ...f.manifest, files: [{ ...file("index.html"), size: 3 }] }),
+    ).rejects.toThrow("differs");
+    const linkedRoot = NodePath.join(d.root, "root-link");
+    await NodeFSP.symlink(d.root, linkedRoot, "dir");
+    await expect(verifyBundle(linkedRoot, f.manifest)).rejects.toThrow("root is not a directory");
+    await NodeFSP.rm(linkedRoot);
     await NodeFSP.writeFile(NodePath.join(d.root, "index.html"), "no");
     await expect(verifyBundle(d.root, f.manifest)).rejects.toThrow("differs");
     await NodeFSP.rm(NodePath.join(d.root, "index.html"));

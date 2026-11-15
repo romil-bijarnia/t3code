@@ -34,13 +34,21 @@ describe("live client update safety", () => {
     const pointer = (type: string, pointerId: number) =>
       Object.assign(new Event(type), { pointerId });
     try {
+      const beforeGesture = await guard.prepare();
       events.dispatchEvent(pointer("pointerdown", 1));
       events.dispatchEvent(pointer("pointerdown", 2));
+      expect(await guard.prepare()).toBeNull();
+      events.dispatchEvent(pointer("pointerup", 99));
       expect(await guard.prepare()).toBeNull();
       events.dispatchEvent(pointer("pointerup", 1));
       expect(await guard.prepare()).toBeNull();
       events.dispatchEvent(pointer("pointercancel", 2));
-      expect(await guard.prepare()).not.toBeNull();
+      const afterGesture = await guard.prepare();
+      expect(afterGesture).not.toBeNull();
+      const navigate = vi.fn();
+      expect(guard.activate(beforeGesture!, navigate)).toBe(false);
+      expect(guard.activate(afterGesture!, navigate)).toBe(true);
+      expect(navigate).toHaveBeenCalledOnce();
     } finally {
       guard.dispose();
     }
@@ -139,6 +147,34 @@ describe("live client update safety", () => {
     events.dispatchEvent(new Event("pointerdown"));
     expect(guard.activate(token!, () => expect.unreachable())).toBe(false);
     guard.dispose();
+  });
+
+  it("never authorizes a pending checkpoint after its renderer was disposed", async () => {
+    let finishCheckpoint = () => {};
+    const unsubscribe = vi.fn();
+    const invalidated = vi.fn();
+    const events = new EventTarget();
+    const guard = createLiveClientUpdateSafety({
+      readFacts: facts,
+      documentHasRisk: () => false,
+      flush: () =>
+        new Promise<void>((resolve) => {
+          finishCheckpoint = resolve;
+        }),
+      subscribe: () => unsubscribe,
+      events,
+      onInvalidated: invalidated,
+    });
+    const pending = guard.prepare();
+    guard.dispose();
+    events.dispatchEvent(new Event("compositionstart"));
+    events.dispatchEvent(new Event("pointerdown"));
+    events.dispatchEvent(new Event("scroll"));
+    finishCheckpoint();
+    expect(await pending).toBeNull();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(invalidated).not.toHaveBeenCalled();
+    expect(guard.activate({ revision: 0 }, () => expect.unreachable())).toBe(false);
   });
 
   it("defers during IME composition and isolates failed change notifications", async () => {

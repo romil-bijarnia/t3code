@@ -2,8 +2,25 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   hasLiveClientDocumentRisk,
+  createLiveClientUpdateSafety,
   registerLiveClientDocumentBlocker,
+  type LiveClientUpdateSafetyFacts,
 } from "./liveClientUpdateSafety";
+
+function readyFacts(): LiveClientUpdateSafetyFacts {
+  return {
+    desktop: true,
+    supportedRoute: true,
+    hydrated: true,
+    persistenceReady: true,
+    hasComposerContent: false,
+    hasQuestionDraft: false,
+    hasAttachmentPreparation: false,
+    hasRendererMutation: false,
+    hasRecording: false,
+    hasUnsafePanel: false,
+  };
+}
 
 function fixture() {
   const root = document.createElement("section");
@@ -36,14 +53,27 @@ describe("live update document boundary", () => {
     }
   });
 
-  it("preserves opaque embedded app state without blocking unrelated backing iframes", () => {
+  it("preserves opaque embedded app forms without blocking unrelated backing iframes", async () => {
     using screen = fixture();
+    const backing = document.createElement("iframe");
+    backing.hidden = true;
+    screen.root.append(backing);
+    expect(hasLiveClientDocumentRisk(document)).toBe(false);
+    backing.remove();
     const frame = document.createElement("iframe");
     frame.hidden = true;
-    screen.root.append(frame);
-    expect(hasLiveClientDocumentRisk(document)).toBe(false);
+    frame.sandbox.add("allow-scripts", "allow-forms");
     frame.dataset.liveClientBlocker = "embedded-app";
+    frame.srcdoc = '<form><textarea>unsent embedded draft</textarea><input type="file"></form>';
+    const loaded = new Promise<void>((resolve) =>
+      frame.addEventListener("load", () => resolve(), { once: true }),
+    );
+    screen.root.append(frame);
+    await loaded;
+    expect(frame.contentDocument).toBeNull();
     expect(hasLiveClientDocumentRisk(document)).toBe(true);
+    frame.remove();
+    expect(hasLiveClientDocumentRisk(document)).toBe(false);
   });
 
   it("reads the timeline's real tail distance instead of trusting a stale follow flag", () => {
@@ -57,26 +87,87 @@ describe("live update document boundary", () => {
     viewport.append(contents);
     screen.root.append(viewport);
     expect(hasLiveClientDocumentRisk(document)).toBe(true);
+    for (const distance of [0, 1, 2]) {
+      viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight - distance;
+      expect(hasLiveClientDocumentRisk(document)).toBe(distance > 1);
+    }
     viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
-    expect(hasLiveClientDocumentRisk(document)).toBe(false);
     viewport.dataset.liveClientFollowingEnd = "false";
     expect(hasLiveClientDocumentRisk(document)).toBe(true);
   });
 
-  it("preserves playing and paused in-progress media positions", () => {
+  it.each(["audio", "video"] as const)(
+    "preserves playing and paused %s positions and retries on media events",
+    async (tag) => {
+      using screen = fixture();
+      const audio = document.createElement(tag);
+      screen.root.append(audio);
+      using paused = vi.spyOn(audio, "paused", "get").mockReturnValue(false);
+      using ended = vi.spyOn(audio, "ended", "get").mockReturnValue(false);
+      using position = vi.spyOn(audio, "currentTime", "get").mockReturnValue(0);
+      const readiness: boolean[] = [];
+      const guard = createLiveClientUpdateSafety({
+        readFacts: readyFacts,
+        documentHasRisk: () => hasLiveClientDocumentRisk(document),
+        flush: () => {},
+        subscribe: () => () => {},
+        events: window,
+        onInvalidated: () => readiness.push(guard.read().eligible),
+      });
+      try {
+        expect(await guard.prepare()).toBeNull();
+        paused.mockReturnValue(true);
+        position.mockReturnValue(5);
+        audio.dispatchEvent(new Event("pause"));
+        expect(readiness.at(-1)).toBe(false);
+        ended.mockReturnValue(true);
+        audio.dispatchEvent(new Event("ended"));
+        expect(readiness.at(-1)).toBe(true);
+        const afterEnd = await guard.prepare();
+        expect(afterEnd).not.toBeNull();
+        ended.mockReturnValue(false);
+        paused.mockReturnValue(false);
+        audio.dispatchEvent(new Event("play"));
+        expect(guard.activate(afterEnd!, () => expect.unreachable())).toBe(false);
+        paused.mockReturnValue(true);
+        position.mockReturnValue(0);
+        audio.dispatchEvent(new Event("emptied"));
+        expect(readiness.at(-1)).toBe(true);
+        expect(await guard.prepare()).not.toBeNull();
+      } finally {
+        guard.dispose();
+      }
+    },
+  );
+
+  it("retries after a text selection is cleared without another input gesture", async () => {
     using screen = fixture();
-    const audio = document.createElement("audio");
-    screen.root.append(audio);
-    using paused = vi.spyOn(audio, "paused", "get").mockReturnValue(false);
-    using ended = vi.spyOn(audio, "ended", "get").mockReturnValue(false);
-    using position = vi.spyOn(audio, "currentTime", "get").mockReturnValue(0);
-    expect(hasLiveClientDocumentRisk(document)).toBe(true);
-    paused.mockReturnValue(true);
-    expect(hasLiveClientDocumentRisk(document)).toBe(false);
-    position.mockReturnValue(5);
-    expect(hasLiveClientDocumentRisk(document)).toBe(true);
-    ended.mockReturnValue(true);
-    expect(hasLiveClientDocumentRisk(document)).toBe(false);
+    const text = document.createTextNode("the reply currently being read");
+    screen.root.append(text);
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    document.getSelection()!.addRange(range);
+    let retry: ReturnType<ReturnType<typeof createLiveClientUpdateSafety>["prepare"]> | undefined;
+    const guard = createLiveClientUpdateSafety({
+      readFacts: readyFacts,
+      documentHasRisk: () => hasLiveClientDocumentRisk(document),
+      flush: () => {},
+      subscribe: () => () => {},
+      events: window,
+      onInvalidated: () => {
+        if (!retry && guard.read().eligible) retry = guard.prepare();
+      },
+    });
+    try {
+      expect(await guard.prepare()).toBeNull();
+      document.getSelection()!.removeAllRanges();
+      document.dispatchEvent(new Event("selectionchange"));
+      expect(retry).toBeDefined();
+      expect(await retry).not.toBeNull();
+      expect(text.data).toBe("the reply currently being read");
+    } finally {
+      guard.dispose();
+    }
   });
 
   it("allows only an empty background composer, not drafts or other focused editors", () => {

@@ -95,6 +95,12 @@ describe("live client asset generations", () => {
     for (let version = 2; version <= 8; version += 1) {
       expect(assets.activate(readyToken(assets.stage(bundle(String(version), {}))))).toBe(true);
     }
+    expect(assets.rollback()).toBe(true);
+    expect(assets.resolve("index.html")).toBe(NodePath.join(bundle("7", {}).root, "index.html"));
+    expect(assets.stage(bundle("9", {}))).toEqual({
+      status: "deferred",
+      reason: "generation-limit",
+    });
     expect(assets.activate(readyToken(assets.stage(bundle("8", {}))))).toBe(true);
     expect(assets.stage(bundle("9", {}))).toEqual({
       status: "deferred",
